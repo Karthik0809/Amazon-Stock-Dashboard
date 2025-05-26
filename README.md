@@ -70,26 +70,16 @@ streamlit run app.py
 
 Or use the included `.bat` file (Windows only):
 
-```bash
-.
-un_dashboard.bat
-```
-
----
-
 ## 🔗 Connect with Me
 
-📇 **Karthik Mulugu**  
-🎓 MS in CS (AI/ML) @ University at Buffalo  
-💼 Seeking roles in Data Science / ML Engineering / AI  
-🔗 [LinkedIn Profile](https://www.linkedin.com/in/karthik0809)
+📇 [Karthik Mulugu](https://www.linkedin.com/in/karthik0809) — Feel free to reach out for any **doubts or clarifications**.
 
 ---
 
 ## 📝 License
 
 This project is licensed under the **MIT License** — you are free to use, modify, and distribute it.  
-See the LICENSE file for details.
+See the [LICENSE](LICENSE) file for details.
 
 ---
 
