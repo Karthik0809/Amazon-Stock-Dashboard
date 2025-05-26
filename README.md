@@ -72,7 +72,7 @@ Or use the included `.bat` file (Windows only):
 
 ## 🔗 Connect with Me
 
-📇 [Karthik Mulugu](https://www.linkedin.com/in/karthik0809) — Feel free to reach out for any **doubts or clarifications**.
+📇 [Karthik Mulugu](https://www.linkedin.com/in/karthikmulugu/) — Feel free to reach out for any **doubts or clarifications**.
 
 ---
 
