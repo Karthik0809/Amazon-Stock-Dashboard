@@ -1,71 +1,96 @@
+# 📊 Amazon Stock Dashboard
+
+A powerful and interactive dashboard for analyzing **Amazon (AMZN) stock performance** using:
+- Historical stock data
+- Technical indicators (RSI, MACD, Bollinger Bands, Moving Averages)
+- Predictive models: Linear Regression, One-Step LSTM, and Seq2Seq LSTM
+- News sentiment analysis
+- Backtest strategies
+
+---
+
 
 ![image](https://github.com/user-attachments/assets/e481158b-3836-4e01-87f8-0a1610e3c0b9)
 
----
 
-## 🔧 Features
+## 🚀 Features
 
-- 📈 **Forecast Tab**: Choose from Linear Regression, One-Step LSTM, or Seq2Seq LSTM models to forecast Amazon stock price up to 30 days.
-- 📉 **Historical Tab**: Visualize historical trends using:
-  - RSI (Relative Strength Index)
-  - MACD (Moving Average Convergence Divergence)
-  - Bollinger Bands
-  - Moving Averages (7-day and 30-day)
-  - RSI Backtest Strategy: Buy if RSI < 30
-- 🤖 **Trained Models Tab**: Compare model predictions on training data (LR, LSTM, Seq2Seq) with performance metrics (RMSE, MAPE).
-- 📰 **News Tab**: View the latest Amazon stock-related news headlines with sentiment analysis and filters.
-- 📚 **Resources Tab**: Curated links to relevant trading resources.
+- 📈 **Live Forecasting**: Choose from 3 models to forecast 1–30 days (7 days for Seq2Seq LSTM)
+- 📉 **Historical Indicators**: Includes RSI, MACD, Bollinger Bands, Moving Averages
+- 🧠 **Model Comparison**: Evaluate LSTM and Seq2Seq against Linear Regression using RMSE/MAPE
+- 🧪 **Backtesting**: Simple RSI-based strategy simulation (Buy if RSI < 30)
+- 📰 **Sentiment Analysis**: Live news with polarity scoring and sentiment filtering
+- 📚 **Resources Tab**: Curated links to learning tools and platforms
 
 ---
 
-## 🚀 Getting Started
+## 📦 Project Structure
 
-### 1. Clone the Repository
-
-```bash
-git clone https://github.com/yourusername/amazon-stock-dashboard.git
-cd amazon-stock-dashboard
+```
+amazon_stock_dashboard/
+│
+├── app.py                  # Streamlit dashboard
+├── model.py                # LSTM model architecture
+├── seq2seq_lstm.py         # Seq2Seq model and utils
+├── requirements.txt        # Python package dependencies
+├── run_dashboard.bat       # Windows launcher
+├── README.md               # Project overview
+└── *.pth                   # Trained model weights (LSTM and Seq2Seq)
 ```
 
-### 2. Install Dependencies
+---
+
+## ⚙️ Installation & Usage
+
+### 1. Clone this repository
+
+```bash
+git clone https://github.com/Karthik0809/Amazon-Stock-Dashboard.git
+cd Amazon-Stock-Dashboard
+```
+
+### 2. Create and activate a virtual environment (optional but recommended)
+
+```bash
+python -m venv venv
+venv\Scripts\activate  # On Windows
+```
+
+### 3. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. Run the Dashboard
+### 4. Run the dashboard
 
 ```bash
 streamlit run app.py
 ```
 
----
+Or use the included `.bat` file (Windows only):
 
-## 📁 Project Structure
-
-```plaintext
+```bash
 .
-├── amazon_lstm_model.pth      # Trained LSTM model
-├── amazon_stock.csv           # Historical stock data (backup)
-├── app.py                     # Main Streamlit dashboard script
-├── model.py                   # Contains One-Step LSTM and Seq2Seq class definitions
-├── seq2seq_lstm.pth           # Trained Seq2Seq model
-├── seq2seq_lstm.py            # Seq2Seq model definition
-├── run_dashboard.bat          # Windows batch file to launch the dashboard
-├── requirements.txt           # Required Python libraries
-└── README.md                  # Project README
+un_dashboard.bat
 ```
 
 ---
 
-## 🛡️ Disclaimers
+## 🔗 Connect with Me
 
-- This dashboard is for **educational purposes only**.
-- The models are trained on **historical data** and may not reflect future stock movements.
-- **News headlines are fetched via Yahoo Finance RSS** and sentiment is analyzed using TextBlob (title only).
+📇 **Karthik Mulugu**  
+🎓 MS in CS (AI/ML) @ University at Buffalo  
+💼 Seeking roles in Data Science / ML Engineering / AI  
+🔗 [LinkedIn Profile](https://www.linkedin.com/in/karthik0809)
 
 ---
 
-## 📬 Contact
+## 📝 License
 
-For feedback, suggestions, or collaborations, feel free to reach out on GitHub or via LinkedIn.
+This project is licensed under the **MIT License** — you are free to use, modify, and distribute it.  
+See the LICENSE file for details.
+
+---
+
+**Note**: This dashboard is for educational purposes only and should not be considered financial advice.
