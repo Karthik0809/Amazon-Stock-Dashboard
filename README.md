@@ -18,21 +18,6 @@ Bollinger Bands: Plots a moving average with upper/lower bands (based on standar
 Moving Averages (MA): Smooths price data to show trends — e.g., 50-day or 200-day average helps identify bullish/bearish signals.
 
 
-* **RSI (Relative Strength Index):**
-  Think of this like a "temperature check" for a stock — if it’s too high (above 70), the stock might be overbought (too hot); too low (below 30), it might be oversold (too cold).
-
-* **MACD (Moving Average Convergence Divergence):**
-  This looks at the *speed* and *direction* of price movement using two moving averages. When one line crosses the other, it often signals a change in trend — kind of like traffic signals for stock momentum.
-
-* **Bollinger Bands:**
-  Imagine the stock price walking on a path with elastic bands above and below it. When the price hits or stretches these bands, it may be about to bounce back or break out — showing how “wild” the price is moving.
-
-* **Moving Averages (MA):**
-  This is like taking an average of past prices to smooth out short-term ups and downs — helping you see the overall trend (like a rising or falling path).
-
-* **EMA (Exponential Moving Average):**
-  A special type of moving average that gives more weight to recent prices — like paying more attention to what happened yesterday than a month ago. It reacts faster to price changes.
-
 ---
 
 
