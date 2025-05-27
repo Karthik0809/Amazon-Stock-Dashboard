@@ -7,6 +7,16 @@ A powerful and interactive dashboard for analyzing **Amazon (AMZN) stock perform
 - News sentiment analysis
 - Backtest strategies
 
+## Technical Indicators:
+
+RSI (Relative Strength Index): Measures momentum by comparing recent gains vs. losses (scale of 0–100); helps spot overbought or oversold conditions.
+
+MACD (Moving Average Convergence Divergence): Tracks the difference between short and long-term EMAs to identify trend shifts and momentum.
+
+Bollinger Bands: Plots a moving average with upper/lower bands (based on standard deviation); indicates volatility and potential breakouts.
+
+Moving Averages (MA): Smooths price data to show trends — e.g., 50-day or 200-day average helps identify bullish/bearish signals.
+
 ---
 
 
