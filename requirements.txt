@@ -1,0 +1,8 @@
+torch
+yfinance
+streamlit
+plotly
+ta
+feedparser
+textblob
+scikit-learn
