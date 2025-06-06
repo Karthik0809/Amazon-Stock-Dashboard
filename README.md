@@ -94,9 +94,9 @@ streamlit run app.py
 
 ## 🛠️ Future Enhancements
 
-- [ ] Enable HTTPS with Let’s Encrypt + Nginx
-- [ ] Dockerize the app for portability
-- [ ] Setup custom domain for public access
+- Enable HTTPS with Let’s Encrypt + Nginx
+- Dockerize the app for portability
+- Setup custom domain for public access
 
 ---
 
