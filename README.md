@@ -59,7 +59,7 @@ A powerful and interactive dashboard for analyzing **Amazon (AMZN) stock perform
    ```
 
 🔗 **Live App URL**:  
-[`http://<your-ec2-public-ip>:8501` ](http://50.17.153.51:8501/) 
+[http://50.17.153.51:8501/](http://50.17.153.51:8501/) 
 *Example: http://18.217.XX.XX:8501*
 
 ---
@@ -115,4 +115,5 @@ See [LICENSE](LICENSE) for details.
 ---
 
 ⚠️ **Disclaimer**: This is an educational project and does not constitute financial advice.
+
 
