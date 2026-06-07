@@ -8,3 +8,6 @@ textblob
 scikit-learn
 numpy
 pandas
+scipy
+statsmodels
+xgboost
