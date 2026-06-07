@@ -692,7 +692,10 @@ with tab_models:
     dummy4      = np.zeros((len(ph_lstm), 4))
     inv_lstm    = scaler_lstm.inverse_transform(np.hstack([dummy4, ph_lstm.reshape(-1, 1)]))[:, -1]
     inv_y_lst   = scaler_lstm.inverse_transform(np.hstack([dummy4, y_lstm.numpy().reshape(-1, 1)]))[:, -1]
-    idx_lstm    = df.index[SEQ_LEN: SEQ_LEN + len(inv_lstm)]
+    _n_lstm      = min(len(inv_lstm), len(inv_y_lst), len(df) - SEQ_LEN)
+    inv_lstm     = inv_lstm[:_n_lstm]
+    inv_y_lst    = inv_y_lst[:_n_lstm]
+    idx_lstm     = df.index[SEQ_LEN: SEQ_LEN + _n_lstm]
     test_mask_lstm = np.array(idx_lstm >= df_test.index[0])
 
     # Seq2Seq test predictions
@@ -707,7 +710,10 @@ with tab_models:
         ph_seq = seq_mdl(X_seq.float()).numpy().flatten()
     inv_seq     = scaler_seq.inverse_transform(ph_seq.reshape(-1, 1)).flatten()
     inv_y_seq   = scaler_seq.inverse_transform(y_seq.numpy().reshape(-1, 1)).flatten()
-    idx_seq     = df.index[SEQ_LEN: SEQ_LEN + len(inv_seq)]
+    _n_seq       = min(len(inv_seq), len(inv_y_seq), len(df) - SEQ_LEN)
+    inv_seq      = inv_seq[:_n_seq]
+    inv_y_seq    = inv_y_seq[:_n_seq]
+    idx_seq      = df.index[SEQ_LEN: SEQ_LEN + _n_seq]
     test_mask_seq = np.array(idx_seq >= df_test.index[0])
 
     def metrics(actual, pred):
