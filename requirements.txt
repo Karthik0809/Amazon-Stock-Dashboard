@@ -6,3 +6,5 @@ ta
 feedparser
 textblob
 scikit-learn
+numpy
+pandas
