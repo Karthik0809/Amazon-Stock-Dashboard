@@ -454,21 +454,51 @@ def _sig(text, variant=""):
     return f'<div class="signal {variant}"><span class="signal-icon">{icon}</span><span>{text}</span></div>'
 
 # ── Data loading ──────────────────────────────────────────────────────────────
+_CSV = "amazon_stock.csv"
+
+def _csv_fallback():
+    """Load from bundled CSV when yfinance is rate-limited."""
+    df = pd.read_csv(_CSV)
+    # normalise column names to match yfinance output
+    df.columns = [c.strip().title().replace("_", "") for c in df.columns]
+    # 'Date' or 'Adjclose' etc.
+    date_col = next((c for c in df.columns if c.lower() == "date"), None)
+    if date_col and date_col != "Date":
+        df.rename(columns={date_col: "Date"}, inplace=True)
+    if "Adjclose" in df.columns:
+        df.rename(columns={"Adjclose": "Adj Close"}, inplace=True)
+    df["Date"] = pd.to_datetime(df["Date"], utc=True).dt.tz_convert(None)
+    df.set_index("Date", inplace=True)
+    return df
+
+def _yf_fetch(ticker, period):
+    d = yf.Ticker(ticker).history(period=period)
+    d.reset_index(inplace=True)
+    if "Date" in d.columns:
+        d.set_index("Date", inplace=True)
+    elif "Datetime" in d.columns:
+        d.rename(columns={"Datetime": "Date"}, inplace=True)
+        d.set_index("Date", inplace=True)
+    d.index = pd.to_datetime(d.index).tz_localize(None)
+    return d
+
 @st.cache_data(ttl=3600)
 def load_data():
-    df = yf.Ticker("AMZN").history(period="2y")
-    df.reset_index(inplace=True)
-    df.set_index("Date", inplace=True)
-    df.index = df.index.tz_localize(None)
-    return df
+    try:
+        return _yf_fetch("AMZN", "2y")
+    except Exception:
+        try:
+            return _csv_fallback()
+        except Exception:
+            st.error("Unable to load AMZN data — yfinance rate-limited and no local CSV found.")
+            st.stop()
 
 @st.cache_data(ttl=3600)
 def load_peers():
     frames = {}
     for t in PEERS:
         try:
-            d = yf.Ticker(t).history(period="1y")
-            d.index = pd.to_datetime(d.index).tz_localize(None)
+            d = _yf_fetch(t, "1y")
             frames[t] = d["Close"]
         except Exception:
             pass
