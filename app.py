@@ -606,7 +606,7 @@ with tab_mkt:
         st.dataframe(
             ret_df.style
                 .format("{:.1f}", subset=["1M (%)", "3M (%)", "6M (%)", "1Y (%)", "Volatility (%)"])
-                .applymap(color_returns, subset=["1M (%)", "3M (%)", "6M (%)", "1Y (%)"]),
+                .map(color_returns, subset=["1M (%)", "3M (%)", "6M (%)", "1Y (%)"]),
             use_container_width=True
         )
 
