@@ -26,7 +26,7 @@ st.set_page_config(
     layout="wide",
 )
 
-st.markdown("""
+st.html("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
 <style>
@@ -418,7 +418,7 @@ hr {
     margin: 10px 0 !important;
 }
 </style>
-""", unsafe_allow_html=True)
+""")
 
 # ── Chart style helper ────────────────────────────────────────────────────────
 def _c(fig, height=None, legend_h=False):
