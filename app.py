@@ -412,7 +412,7 @@ with tab_models:
     inv_lstm  = scaler_lstm.inverse_transform(np.hstack([dummy4, ph_lstm.reshape(-1,1)]))[:,-1]
     inv_y_lst = scaler_lstm.inverse_transform(np.hstack([dummy4, y_lstm.numpy().reshape(-1,1)]))[:,-1]
     idx_lstm  = df.index[SEQ_LEN : SEQ_LEN + len(inv_lstm)]
-    test_mask_lstm = idx_lstm >= df_test.index[0]
+    test_mask_lstm = (idx_lstm >= df_test.index[0]).values
 
     # Seq2Seq
     closes_all  = df[["Close"]].values
@@ -427,7 +427,7 @@ with tab_models:
     inv_seq   = scaler_seq.inverse_transform(ph_seq.reshape(-1,1)).flatten()
     inv_y_seq = scaler_seq.inverse_transform(y_seq.numpy().reshape(-1,1)).flatten()
     idx_seq   = df.index[SEQ_LEN : SEQ_LEN + len(inv_seq)]
-    test_mask_seq = idx_seq >= df_test.index[0]
+    test_mask_seq = (idx_seq >= df_test.index[0]).values
 
     # ── Metrics ───────────────────────────────────────────────────────────────
     def metrics(actual, pred):
