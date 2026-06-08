@@ -498,14 +498,34 @@ def load_data():
 
 @st.cache_data(ttl=3600)
 def load_peers():
+    """Load peer Close prices. AMZN always available from CSV; others via yfinance."""
     frames = {}
-    for t in PEERS:
+
+    # AMZN — always available from the main df (passed as csv fallback)
+    try:
+        amzn = _csv_fallback()["Close"]
+        amzn.index = pd.to_datetime(amzn.index).tz_localize(None)
+        # trim to last 1 year
+        cutoff = amzn.index[-1] - pd.DateOffset(years=1)
+        frames["AMZN"] = amzn[amzn.index >= cutoff]
+    except Exception:
+        pass
+
+    # Other peers — best-effort via yfinance
+    for t in [p for p in PEERS if p != "AMZN"]:
         try:
             d = _yf_fetch(t, "1y")
             frames[t] = d["Close"]
         except Exception:
             pass
-    return pd.DataFrame(frames).dropna()
+
+    if not frames:
+        return pd.DataFrame()
+
+    peer_df = pd.DataFrame(frames)
+    # forward-fill small gaps, drop rows where ALL are NaN
+    peer_df = peer_df.ffill().dropna(how="all")
+    return peer_df
 
 @st.cache_data(ttl=1800)
 def load_news():
@@ -1015,20 +1035,17 @@ tab_fc, tab_tech, tab_risk, tab_mkt, tab_wf, tab_sig, tab_news, tab_about = st.t
 with tab_fc:
     ctrl, chart_col = st.columns([1, 3])
     with ctrl:
-        model_opt    = st.selectbox("Forecast model", ["One-Step LSTM", "Seq2Seq LSTM"])
-        n_days       = st.slider("Horizon (days)", 1, 30, 7)
-        if model_opt == "Seq2Seq LSTM" and n_days != 7:
-            st.info("Seq2Seq is trained for 7-day output — setting to 7.")
+        st.markdown(_sig("Seq2Seq Encoder-Decoder LSTM — direct multi-step output, no error accumulation.", "bull"), unsafe_allow_html=True)
+        n_days       = st.slider("Horizon (days)", 1, 7, 7)
+        if n_days != 7:
+            st.info("Seq2Seq model is trained for a 7-day horizon — setting to 7.")
             n_days = 7
         show_ci      = st.checkbox("Show 95% confidence band", value=True)
         show_mc      = st.checkbox("Show Monte Carlo simulation", value=False)
         context_days = st.slider("Historical context (days)", 30, 120, 60)
 
-    with st.spinner("Running forecast…"):
-        if model_opt == "One-Step LSTM":
-            mu, lo, hi = forecast_lstm(df, SEQ_LEN, n_days)
-        else:
-            mu, lo, hi = forecast_seq2seq(df, SEQ_LEN, n_days)
+    with st.spinner("Running Seq2Seq forecast…"):
+        mu, lo, hi = forecast_seq2seq(df, SEQ_LEN, n_days)
 
     current_price = df["Close"].iloc[-1]
     end_price     = mu.iloc[-1]
@@ -1060,7 +1077,7 @@ with tab_fc:
             fig.add_trace(go.Scatter(x=mc_dates, y=np.median(mc_paths, axis=1),
                                      name="MC Median", line=dict(color="#ffb300", width=2, dash="dot")))
 
-        fig.add_trace(go.Scatter(x=mu.index, y=mu, name=f"{model_opt} Forecast",
+        fig.add_trace(go.Scatter(x=mu.index, y=mu, name="Seq2Seq Forecast",
                                  line=dict(color="#26a69a", width=2.5, dash="dash")))
         if show_ci and lo is not None:
             fig.add_trace(go.Scatter(
@@ -1076,7 +1093,7 @@ with tab_fc:
     direction = "upward" if trend_up else "downward"
     variant   = "bull" if trend_up else "bear"
     st.markdown(_sig(
-        f"<strong>{model_opt}</strong> projects a <strong>{direction} trend</strong> "
+        f"<strong>Seq2Seq LSTM</strong> projects a <strong>{direction} trend</strong> "
         f"over {n_days} day(s): <strong>${current_price:.2f} → ${end_price:.2f} ({pct_chg:+.2f}%)</strong>",
         variant
     ), unsafe_allow_html=True)
@@ -1311,8 +1328,13 @@ with tab_mkt:
         peers_df = load_peers()
 
     if peers_df.empty:
-        st.error("Could not load peer data. Try refreshing.")
-    else:
+        # Absolute fallback — build from the main df we already have
+        peers_df = pd.DataFrame({"AMZN": df["Close"]})
+
+    if len(peers_df.columns) < 2:
+        st.markdown(_sig("yfinance rate-limited — only AMZN data available. Peer comparison charts will show AMZN only. Refresh in a few minutes to load all peers.", "warn"), unsafe_allow_html=True)
+
+    if True:  # always render
         st.markdown(_sec("Relative Performance · Normalised to 100"), unsafe_allow_html=True)
         norm_peers = peers_df / peers_df.iloc[0] * 100
         fig_peers = go.Figure()
@@ -1897,17 +1919,10 @@ with tab_about:
     with c2:
         st.markdown("""
         <div class="info-block">
-          <span class="ib-title">One-Step LSTM</span>
-          Input: 30-step window × 5 features (OHLCV)<br>
-          Architecture: LSTM(64 hidden) → Linear(1)<br>
-          Autoregressive multi-day rollout<br>
-          95% CI from training residual std × √h
-        </div>
-        <div class="info-block">
           <span class="ib-title">Seq2Seq LSTM</span>
-          2-layer encoder reads the 30-day input window<br>
-          2-layer decoder unrolls 7-step output directly<br>
-          Avoids error accumulation of autoregressive approaches
+          2-layer encoder reads the 30-day input window × 1 feature (Close)<br>
+          2-layer decoder unrolls 7-step output directly — no autoregressive error accumulation<br>
+          95% CI band available; direct multi-step horizon forecasting
         </div>
         <div class="info-block">
           <span class="ib-title">Random Forest · Explainability</span>
