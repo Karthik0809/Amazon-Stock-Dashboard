@@ -11,3 +11,4 @@ scipy
 statsmodels
 xgboost
 transformers
+shap

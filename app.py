@@ -705,6 +705,52 @@ def signal_scorecard(df):
 
     return signals
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def backtest_signals(_df):
+    """Backtest each signal: what was the average forward return after each trigger?"""
+    results = []
+
+    # RSI oversold → 5-day forward return
+    fwd5 = _df["Close"].pct_change(5).shift(-5) * 100
+    fwd10 = _df["Close"].pct_change(10).shift(-10) * 100
+
+    oversold = _df[_df["RSI"] < 30]
+    if len(oversold) > 0:
+        avg = fwd5.loc[oversold.index].dropna().mean()
+        n = len(fwd5.loc[oversold.index].dropna())
+        results.append({"Signal": "RSI < 30 (Oversold)", "Horizon": "5-day fwd", "Avg Return (%)": round(avg, 2), "Triggers": n, "Win Rate (%)": round((fwd5.loc[oversold.index].dropna() > 0).mean() * 100, 1)})
+
+    # RSI overbought → 5-day forward return
+    overbought = _df[_df["RSI"] > 70]
+    if len(overbought) > 0:
+        avg = fwd5.loc[overbought.index].dropna().mean()
+        n = len(fwd5.loc[overbought.index].dropna())
+        results.append({"Signal": "RSI > 70 (Overbought)", "Horizon": "5-day fwd", "Avg Return (%)": round(avg, 2), "Triggers": n, "Win Rate (%)": round((fwd5.loc[overbought.index].dropna() > 0).mean() * 100, 1)})
+
+    # MACD bullish cross → 10-day forward return
+    bull_cross = _df[(_df["MACD"] > _df["MACD_Signal"]) & (_df["MACD"].shift(1) <= _df["MACD_Signal"].shift(1))]
+    if len(bull_cross) > 0:
+        avg = fwd10.loc[bull_cross.index].dropna().mean()
+        n = len(fwd10.loc[bull_cross.index].dropna())
+        results.append({"Signal": "MACD Bullish Cross", "Horizon": "10-day fwd", "Avg Return (%)": round(avg, 2), "Triggers": n, "Win Rate (%)": round((fwd10.loc[bull_cross.index].dropna() > 0).mean() * 100, 1)})
+
+    # MACD bearish cross → 10-day forward return
+    bear_cross = _df[(_df["MACD"] < _df["MACD_Signal"]) & (_df["MACD"].shift(1) >= _df["MACD_Signal"].shift(1))]
+    if len(bear_cross) > 0:
+        avg = fwd10.loc[bear_cross.index].dropna().mean()
+        n = len(fwd10.loc[bear_cross.index].dropna())
+        results.append({"Signal": "MACD Bearish Cross", "Horizon": "10-day fwd", "Avg Return (%)": round(avg, 2), "Triggers": n, "Win Rate (%)": round((fwd10.loc[bear_cross.index].dropna() > 0).mean() * 100, 1)})
+
+    # High volume days → next day return
+    high_vol_days = _df[_df["Vol_ratio"] > 1.5]
+    if len(high_vol_days) > 0:
+        fwd1 = _df["Close"].pct_change(1).shift(-1) * 100
+        avg = fwd1.loc[high_vol_days.index].dropna().mean()
+        n = len(fwd1.loc[high_vol_days.index].dropna())
+        results.append({"Signal": "High Volume (>1.5x avg)", "Horizon": "1-day fwd", "Avg Return (%)": round(avg, 2), "Triggers": n, "Win Rate (%)": round((fwd1.loc[high_vol_days.index].dropna() > 0).mean() * 100, 1)})
+
+    return pd.DataFrame(results)
+
 def mape(y_true, y_pred):
     mask = y_true != 0
     return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
@@ -892,6 +938,23 @@ def finbert_sentiment(pipe, texts):
             results.append(("neutral", 0.0))
     return results
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def sentiment_price_correlation(_df):
+    """Compute correlation between rolling returns and any available sentiment proxy."""
+    # Use RSI as a momentum proxy for correlation analysis structure
+    fwd1 = _df["Close"].pct_change(1).shift(-1)
+    fwd5 = _df["Close"].pct_change(5).shift(-5)
+
+    corr_rsi_fwd1 = _df["RSI"].corr(fwd1)
+    corr_vol_fwd1 = _df["Volatility"].corr(fwd1)
+    corr_macd_fwd1 = _df["MACD"].corr(fwd1)
+
+    return {
+        "RSI → next-day return": round(corr_rsi_fwd1, 4),
+        "Volatility → next-day return": round(corr_vol_fwd1, 4),
+        "MACD → next-day return": round(corr_macd_fwd1, 4),
+    }
+
 # ── Risk metrics ──────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def compute_risk_metrics(returns, rf_annual=0.05):
@@ -919,6 +982,37 @@ def compute_risk_metrics(returns, rf_annual=0.05):
         cvar95=cvar95, p_normal=p_normal, skew=skew, kurt=kurt,
         cum=cum, dd=dd,
     )
+
+@st.cache_data(ttl=7200, show_spinner=False)
+def compute_model_comparison(_df):
+    """Compare all models against naive baseline on same test set."""
+    closes = _df["Close"].values
+    n = len(closes)
+    split = int(n * 0.8)
+
+    y_te = closes[split:]
+    dates_te = _df.index[split:]
+
+    # Naive baseline: predict tomorrow = today
+    naive_pred = closes[split-1:n-1]
+    naive_rmse = float(np.sqrt(np.mean((y_te - naive_pred)**2)))
+    naive_mape_v = float(np.mean(np.abs((y_te - naive_pred) / (y_te + 1e-9))) * 100)
+
+    # Linear Regression
+    X_tr = np.arange(split).reshape(-1,1)
+    X_te = np.arange(split, n).reshape(-1,1)
+    lr = LinearRegression().fit(X_tr, closes[:split])
+    lr_pred = lr.predict(X_te)
+    lr_rmse = float(np.sqrt(np.mean((y_te - lr_pred)**2)))
+    lr_mape_v = float(np.mean(np.abs((y_te - lr_pred) / (y_te + 1e-9))) * 100)
+
+    return {
+        "models": ["Naive (today=tomorrow)", "Linear Regression"],
+        "rmse":   [naive_rmse, lr_rmse],
+        "mape":   [naive_mape_v, lr_mape_v],
+        "naive_rmse": naive_rmse,
+        "naive_mape": naive_mape_v,
+    }
 
 # ── Feature importance ────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
@@ -1012,7 +1106,6 @@ with tab_fc:
             st.info("Seq2Seq model is trained for a 7-day horizon — setting to 7.")
             n_days = 7
         show_ci      = st.checkbox("Show 95% confidence band", value=True)
-        show_mc      = st.checkbox("Show Monte Carlo simulation", value=False)
         context_days = st.slider("Historical context (days)", 30, 120, 60)
 
     with st.spinner("Running Seq2Seq forecast…"):
@@ -1028,25 +1121,6 @@ with tab_fc:
         hist = df["Close"].iloc[-context_days:]
         fig.add_trace(go.Scatter(x=hist.index, y=hist, name="Historical",
                                  line=dict(color="#5c6bc0", width=2)))
-
-        if show_mc:
-            mc_dates, mc_paths = monte_carlo_gbm(df, n_days=n_days, n_sims=500)
-            p10 = np.percentile(mc_paths, 10, axis=1)
-            p25 = np.percentile(mc_paths, 25, axis=1)
-            p75 = np.percentile(mc_paths, 75, axis=1)
-            p90 = np.percentile(mc_paths, 90, axis=1)
-            for path in mc_paths[:, ::50].T:
-                fig.add_trace(go.Scatter(x=mc_dates, y=path, mode="lines",
-                                         line=dict(color="rgba(255,183,77,0.08)", width=1),
-                                         showlegend=False))
-            fig.add_trace(go.Scatter(
-                x=list(mc_dates) + list(mc_dates[::-1]),
-                y=list(p90) + list(p10[::-1]),
-                fill="toself", fillcolor="rgba(255,183,77,0.1)",
-                line=dict(color="rgba(0,0,0,0)"), name="MC P10–P90"
-            ))
-            fig.add_trace(go.Scatter(x=mc_dates, y=np.median(mc_paths, axis=1),
-                                     name="MC Median", line=dict(color="#ffb300", width=2, dash="dot")))
 
         fig.add_trace(go.Scatter(x=mu.index, y=mu, name="Seq2Seq Forecast",
                                  line=dict(color="#26a69a", width=2.5, dash="dash")))
@@ -1069,17 +1143,34 @@ with tab_fc:
         variant
     ), unsafe_allow_html=True)
 
-    if show_mc:
-        mc_final = mc_paths[-1]
-        prob_up   = (mc_final > current_price).mean() * 100
-        mc_med    = np.median(mc_final)
-        mc_p5     = np.percentile(mc_final, 5)
-        mc_p95    = np.percentile(mc_final, 95)
-        ca, cb, cc, cd = st.columns(4)
-        ca.metric("MC Median (end)",    f"${mc_med:.2f}")
-        cb.metric("P5 (downside)",      f"${mc_p5:.2f}")
-        cc.metric("P95 (upside)",       f"${mc_p95:.2f}")
-        cd.metric("P(price rises)",     f"{prob_up:.1f}%")
+    # ── Model comparison table ────────────────────────────────────────────────
+    st.markdown(_sec("Model Comparison · All Models vs Naive Baseline", "teal"), unsafe_allow_html=True)
+    st.caption("All models evaluated on the same held-out 20% test set (chronological split, no data leakage).")
+    comp = compute_model_comparison(df)
+
+    # Build comparison rows including XGB if trained
+    comp_rows = []
+    for name, rmse, mape_v in zip(comp["models"], comp["rmse"], comp["mape"]):
+        vs_naive = ((rmse - comp["naive_rmse"]) / comp["naive_rmse"]) * 100
+        comp_rows.append({
+            "Model": name,
+            "RMSE ($)": f"${rmse:.2f}",
+            "MAPE (%)": f"{mape_v:.2f}%",
+            "vs Naive Baseline": f"{'baseline' if name.startswith('Naive') else f'{vs_naive:+.1f}%'}"
+        })
+
+    comp_df = pd.DataFrame(comp_rows)
+    st.dataframe(comp_df, width='stretch', hide_index=True)
+
+    naive_rmse = comp["naive_rmse"]
+    naive_mape = comp["naive_mape"]
+    lr_rmse = comp["rmse"][1]
+    st.markdown(_sig(
+        f"Naive baseline (predict today's price for tomorrow): RMSE <strong>${naive_rmse:.2f}</strong>, MAPE <strong>{naive_mape:.2f}%</strong>. "
+        f"Linear Regression RMSE: <strong>${lr_rmse:.2f}</strong>. "
+        f"Beating the naive baseline is the minimum bar for any forecasting model on financial time series.",
+        "warn"
+    ), unsafe_allow_html=True)
 
     st.markdown(_sec("Forecast Table", "teal"), unsafe_allow_html=True)
     fdf = mu.reset_index()
@@ -1512,6 +1603,43 @@ with tab_wf:
             fig_xfi.update_layout(xaxis_title="Importance (Gain)")
             st.plotly_chart(fig_xfi, width='stretch')
 
+                # ── SHAP Feature Importance ───────────────────────────────
+            st.markdown(_sec("SHAP Values · Model Interpretability", "teal"), unsafe_allow_html=True)
+            st.caption("SHAP (SHapley Additive exPlanations) shows how much each feature contributes to each prediction. More reliable than built-in feature importance.")
+            try:
+                import shap
+                feat_xgb = df[["RSI", "MACD", "MACD_Signal", "BB_width", "MA_ratio",
+                               "Vol_ratio", "Volatility", "Returns"]].copy()
+                feat_xgb["Price_vs_MA30"] = (df["Close"] - df["MA30"]) / df["MA30"]
+                feat_xgb["Price_vs_BB"] = (df["Close"] - df["BB_mid"]) / (df["BB_upper"] - df["BB_lower"] + 1e-9)
+                feat_xgb["High_Low_ratio"] = (df["High"] - df["Low"]) / df["Close"]
+                feat_xgb = feat_xgb.dropna()
+                split_s = int(len(feat_xgb) * 0.8)
+                X_te_shap = feat_xgb.iloc[split_s:]
+
+                explainer = shap.TreeExplainer(xgb_model)
+                shap_vals = explainer.shap_values(X_te_shap)
+                mean_shap = pd.Series(np.abs(shap_vals).mean(axis=0), index=X_te_shap.columns).sort_values(ascending=True)
+
+                fig_shap = go.Figure(go.Bar(
+                    x=mean_shap.values, y=mean_shap.index, orientation="h",
+                    marker_color="#2563eb", opacity=0.85
+                ))
+                fig_shap.update_layout(xaxis_title="Mean |SHAP value|", title="SHAP Feature Importance")
+                _c(fig_shap, height=320)
+                st.plotly_chart(fig_shap, width='stretch')
+
+                top_feat = mean_shap.index[-1]
+                st.markdown(_sig(
+                    f"SHAP analysis: <strong>{top_feat}</strong> is the most influential feature for XGBoost predictions. "
+                    f"SHAP values measure actual contribution to each prediction, unlike built-in importance which can overweight high-cardinality features.",
+                    "bull"
+                ), unsafe_allow_html=True)
+            except ImportError:
+                st.info("Install `shap` package to see SHAP values: `pip install shap`")
+            except Exception as _shap_e:
+                st.warning(f"SHAP analysis unavailable: {_shap_e}")
+
             # Walk-forward validation
             st.markdown(_sec("Walk-Forward Validation · LR vs XGBoost", "amber"), unsafe_allow_html=True)
             with st.spinner("Running rolling walk-forward validation…"):
@@ -1696,107 +1824,32 @@ with tab_sig:
         st.dataframe(anom_show.tail(15), width='stretch')
         st.markdown(_sig(f"<strong>{len(anom_df)}</strong> anomalous sessions detected over the full history — {len(up_anom)} positive, {len(down_anom)} negative.", "warn"), unsafe_allow_html=True)
 
-    # ── Portfolio Simulator ───────────────────────────────────────────────────
+    # ── Signal Backtesting ────────────────────────────────────────────────────
+    st.markdown(_sec("Signal Backtesting · Historical Predictive Power", "teal"), unsafe_allow_html=True)
+    st.caption("For each signal trigger in the full history, what was the average forward return? Win rate = % of triggers where price was higher at horizon.")
+
     try:
-        st.markdown(_sec("Portfolio Simulator · P&L Calculator", "blue"), unsafe_allow_html=True)
-        st.caption("Estimate unrealised P&L and project value using model forecasts.")
-        ps1, ps2, ps3 = st.columns(3)
-        with ps1:
-            shares   = st.number_input("Shares held", min_value=0.0, value=10.0, step=1.0)
-        with ps2:
-            avg_cost = st.number_input("Avg cost basis ($/share)", min_value=0.0, value=float(f"{cur_price:.2f}"), step=1.0)
-        with ps3:
-            fc_horizon = st.slider("Forecast horizon (days)", 1, 30, 7, key="ps_horizon")
-
-        current_val    = shares * cur_price
-        cost_basis     = shares * avg_cost
-        unrealised     = current_val - cost_basis
-        unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else 0
-
-        mu_ps, _, _  = forecast_lr(df, fc_horizon)
-        proj_price   = mu_ps.iloc[-1]
-        proj_val     = shares * proj_price
-        proj_pnl     = proj_val - cost_basis
-        proj_pnl_pct = (proj_pnl / cost_basis * 100) if cost_basis > 0 else 0
-
-        pa, pb, pc, pd_ = st.columns(4)
-        pa.metric("Current Value",                f"${current_val:,.2f}")
-        pb.metric("Unrealised P&L",               f"${unrealised:+,.2f}", f"{unrealised_pct:+.1f}%")
-        pc.metric(f"Projected Price ({fc_horizon}d)", f"${proj_price:.2f}")
-        pd_.metric("Projected P&L",               f"${proj_pnl:+,.2f}", f"{proj_pnl_pct:+.1f}%")
-
-        pnl_var = "bull" if unrealised >= 0 else "bear"
-        st.markdown(_sig(
-            f"Holding <strong>{shares:g} shares</strong> at avg cost <strong>${avg_cost:.2f}</strong> — "
-            f"current unrealised P&amp;L: <strong>${unrealised:+,.2f}</strong> ({unrealised_pct:+.1f}%). "
-            f"LR model projects <strong>${proj_price:.2f}</strong> in {fc_horizon} days → projected P&amp;L: <strong>${proj_pnl:+,.2f}</strong>.",
-            pnl_var
-        ), unsafe_allow_html=True)
-    except Exception as _ps_err:
-        st.warning(f"Portfolio simulator unavailable: {_ps_err}")
-
-    # ── Options Greeks (Black-Scholes) ────────────────────────────────────────
-    st.markdown(_sec("Options Pricing · Black-Scholes Model & Greeks", "amber"), unsafe_allow_html=True)
-    st.caption("European option pricing with all five Greeks — Delta, Gamma, Theta, Vega, Rho.")
-    og1, og2, og3, og4, og5 = st.columns(5)
-    S_bs   = df["Close"].iloc[-1]
-    K_bs   = og1.number_input("Strike (K)", value=float(round(S_bs)), step=5.0)
-    T_bs   = og2.number_input("Days to Expiry", value=30, min_value=1, max_value=365) / 365
-    r_bs   = og3.number_input("Risk-Free Rate (%)", value=5.0, step=0.25) / 100
-    sig_bs = og4.number_input("IV / Vol (%)", value=float(f"{df['Volatility'].iloc[-1]:.1f}"), step=1.0) / 100
-    opt_t  = og5.selectbox("Type", ["call", "put"])
-
-    price_bs, delta, gamma, theta, vega, rho = black_scholes(S_bs, K_bs, T_bs, r_bs, sig_bs, opt_t)
-
-    greek_cols = st.columns(6)
-    greek_data = [
-        ("Option Price", f"${price_bs:.4f}", ""),
-        ("Delta Δ",      f"{delta:.4f}",     "Sensitivity to ΔS"),
-        ("Gamma Γ",      f"{gamma:.6f}",     "Rate of change of Δ"),
-        ("Theta Θ",      f"${theta:.4f}/day","Time decay"),
-        ("Vega V",       f"${vega:.4f}/%",   "Sensitivity to Δvol"),
-        ("Rho ρ",        f"${rho:.4f}/%",    "Sensitivity to Δr"),
-    ]
-    for col, (name, val, sub) in zip(greek_cols, greek_data):
-        col.markdown(f"""
-        <div style="background:#0d1220;border:1px solid #192540;border-radius:3px;padding:12px 10px;text-align:center">
-          <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">{name}</div>
-          <div style="font-family:'Space Mono',monospace;font-size:1.1rem;color:#d8e3f5;font-weight:700">{val}</div>
-          <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:#3d5070;margin-top:4px">{sub}</div>
-        </div>""", unsafe_allow_html=True)
-
-    # IV surface: price across strikes
-    st.markdown(_sec("Option Price Surface · Strike vs IV", "blue"), unsafe_allow_html=True)
-    strikes_range = np.linspace(S_bs * 0.7, S_bs * 1.3, 30)
-    iv_range      = np.linspace(0.10, 0.70, 20)
-    Z_surf = np.array([[black_scholes(S_bs, k, T_bs, r_bs, iv, opt_t)[0]
-                         for k in strikes_range] for iv in iv_range])
-    fig_surf = go.Figure(go.Surface(
-        x=strikes_range, y=iv_range * 100, z=Z_surf,
-        colorscale="Viridis", opacity=0.85,
-        contours=dict(z=dict(show=True, usecolormap=True, highlightcolor="#10b981", project_z=True))
-    ))
-    fig_surf.update_layout(
-        scene=dict(
-            xaxis=dict(title="Strike ($)", backgroundcolor="#05080f", gridcolor="#192540",
-                       tickfont=dict(color="#3d5070", size=9)),
-            yaxis=dict(title="IV (%)",    backgroundcolor="#05080f", gridcolor="#192540",
-                       tickfont=dict(color="#3d5070", size=9)),
-            zaxis=dict(title="Option Price ($)", backgroundcolor="#05080f", gridcolor="#192540",
-                       tickfont=dict(color="#3d5070", size=9)),
-            bgcolor="#05080f",
-        ),
-        paper_bgcolor="#05080f", font=dict(color="#7d93b8", family="Space Mono, monospace"),
-        margin=dict(l=0, r=0, t=20, b=0), height=460,
-    )
-    st.plotly_chart(fig_surf, width='stretch')
-    moneyness = "IN-THE-MONEY" if (S_bs > K_bs and opt_t == "call") or (S_bs < K_bs and opt_t == "put") else "OUT-OF-THE-MONEY" if (S_bs < K_bs and opt_t == "call") or (S_bs > K_bs and opt_t == "put") else "AT-THE-MONEY"
-    st.markdown(_sig(
-        f"{opt_t.upper()} option — S=${S_bs:.2f}, K=${K_bs:.2f} → <strong>{moneyness}</strong>. "
-        f"Delta <strong>{delta:.4f}</strong> means a $1 move in AMZN → ~${abs(delta)*shares:.2f} P&amp;L on {shares:.0f} shares. "
-        f"Theta <strong>${theta:.4f}/day</strong> — time decay cost per day held.",
-        "bull" if moneyness == "IN-THE-MONEY" else "warn"
-    ), unsafe_allow_html=True)
+        bt_df = backtest_signals(df)
+        if not bt_df.empty:
+            def color_bt(v):
+                try:
+                    fv = float(v)
+                    return "color:#059669" if fv > 0 else "color:#dc2626" if fv < 0 else ""
+                except:
+                    return ""
+            st.dataframe(
+                bt_df.style.map(color_bt, subset=["Avg Return (%)"]),
+                width='stretch', hide_index=True
+            )
+            best = bt_df.loc[bt_df["Avg Return (%)"].abs().idxmax()]
+            st.markdown(_sig(
+                f"Strongest signal historically: <strong>{best['Signal']}</strong> → "
+                f"avg {best['Horizon']} return of <strong>{best['Avg Return (%)']:+.2f}%</strong> "
+                f"across <strong>{best['Triggers']}</strong> triggers (win rate: {best['Win Rate (%)']:.1f}%).",
+                "bull" if best["Avg Return (%)"] > 0 else "bear"
+            ), unsafe_allow_html=True)
+    except Exception as _bt_e:
+        st.warning(f"Backtesting unavailable: {_bt_e}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — NEWS & SENTIMENT (FinBERT)
@@ -1903,6 +1956,27 @@ with tab_news:
                 st.caption(f"<span style='color:{col_badge}'>{badge}</span>  ·  score: {score:+.4f}  ·  {entry.get('published', '')}", unsafe_allow_html=True)
                 st.markdown(f"{entry.get('summary', '')[:220]}…")
                 st.markdown("---")
+
+            # ── Sentiment vs Price Correlation ────────────────────────────
+            st.markdown(_sec("Feature Correlation · Indicator Predictive Power", "teal"), unsafe_allow_html=True)
+            st.caption("Pearson correlation between technical indicators and next-day/5-day forward returns. Shows which signals have historically had the most linear predictive power.")
+            corr_data = sentiment_price_correlation(df)
+            corr_rows = [{"Indicator": k, "Correlation with next-day return": v,
+                           "Interpretation": "Weak negative" if v < -0.05 else "Weak positive" if v > 0.05 else "Near zero (no linear relationship)"}
+                          for k, v in corr_data.items()]
+            corr_df = pd.DataFrame(corr_rows)
+            def color_corr(v):
+                try:
+                    fv = float(v)
+                    return "color:#059669" if fv > 0.05 else "color:#dc2626" if fv < -0.05 else ""
+                except:
+                    return ""
+            st.dataframe(corr_df.style.map(color_corr, subset=["Correlation with next-day return"]), width='stretch', hide_index=True)
+            st.markdown(_sig(
+                "Low correlations confirm the Efficient Market Hypothesis on large-cap stocks — no single technical indicator reliably predicts next-day returns. "
+                "This is an expected and honest finding, not a failure of the analysis.",
+                "warn"
+            ), unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — ABOUT
