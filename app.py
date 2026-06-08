@@ -25,76 +25,67 @@ PEERS   = ["AMZN", "MSFT", "GOOGL", "META", "AAPL", "SPY"]
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="AMZN · Intelligence Terminal",
+    page_title="AMZN · Stock Analytics Dashboard",
     page_icon="▸",
     layout="wide",
 )
 
 st.html("""
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
 /* ── Root variables ──────────────────────────── */
 :root {
-    --bg0:    #05080f;
-    --bg1:    #090d18;
-    --bg2:    #0d1220;
-    --bg3:    #111829;
-    --bg4:    #162035;
-    --b0:     #192540;
-    --b1:     #1e2e4e;
-    --b2:     #243660;
-    --t0:     #d8e3f5;
-    --t1:     #7d93b8;
-    --t2:     #3d5070;
-    --blue:   #3b82f6;
-    --teal:   #10b981;
-    --amber:  #f59e0b;
-    --red:    #ef4444;
-    --purple: #8b5cf6;
-    --blueglow: rgba(59,130,246,0.12);
-    --tealglow: rgba(16,185,129,0.10);
-    --redglow:  rgba(239,68,68,0.10);
+    --bg0:    #ffffff;
+    --bg1:    #f8f9fc;
+    --bg2:    #f1f4f9;
+    --bg3:    #e8edf5;
+    --b0:     #e2e8f0;
+    --b1:     #cbd5e1;
+    --t0:     #0f172a;
+    --t1:     #475569;
+    --t2:     #94a3b8;
+    --blue:   #2563eb;
+    --teal:   #059669;
+    --amber:  #d97706;
+    --red:    #dc2626;
+    --purple: #7c3aed;
 }
 
 /* ── Base ────────────────────────────────────── */
 html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
-    font-family: 'DM Sans', sans-serif !important;
+    font-family: 'Inter', sans-serif !important;
 }
 
 [data-testid="stAppViewContainer"] {
     background-color: var(--bg0) !important;
-    background-image:
-        linear-gradient(rgba(59,130,246,0.018) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(59,130,246,0.018) 1px, transparent 1px);
-    background-size: 48px 48px;
 }
 
 [data-testid="stHeader"] {
-    background: rgba(5,8,15,0.92) !important;
+    background: rgba(255,255,255,0.95) !important;
     border-bottom: 1px solid var(--b0) !important;
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(8px);
 }
 
 #MainMenu, footer, [data-testid="stToolbar"] { display: none !important; }
 
 /* ── Scrollbar ───────────────────────────────── */
-::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: var(--bg1); }
-::-webkit-scrollbar-thumb { background: var(--b1); border-radius: 2px; }
+::-webkit-scrollbar-thumb { background: var(--b1); border-radius: 4px; }
 
 /* ── Terminal header ─────────────────────────── */
 .t-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 18px 0 14px;
+    padding: 20px 0 16px;
     border-bottom: 1px solid var(--b0);
     margin-bottom: 20px;
 }
 .t-ticker-block { display: flex; align-items: baseline; gap: 12px; }
 .t-symbol {
-    font-family: 'Space Mono', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 1.7rem;
     font-weight: 700;
     color: var(--t0);
@@ -106,39 +97,40 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     font-weight: 400;
 }
 .t-exch {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.62rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.6rem;
     color: var(--t2);
     text-transform: uppercase;
     letter-spacing: 0.1em;
     border: 1px solid var(--b0);
-    padding: 2px 7px;
-    border-radius: 3px;
+    background: var(--bg2);
+    padding: 2px 8px;
+    border-radius: 4px;
 }
 .t-right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .t-price-main {
-    font-family: 'Space Mono', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 2rem;
     font-weight: 700;
     color: var(--t0);
     letter-spacing: -0.03em;
 }
 .t-change-up {
-    font-family: 'Space Mono', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 0.82rem;
     color: var(--teal);
 }
 .t-change-down {
-    font-family: 'Space Mono', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 0.82rem;
     color: var(--red);
 }
 .t-meta {
-    font-family: 'Space Mono', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 0.58rem;
     color: var(--t2);
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.12em;
     padding: 14px 0 0;
 }
 .t-meta span { margin-right: 20px; }
@@ -148,11 +140,11 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    background: rgba(16,185,129,0.08);
-    border: 1px solid rgba(16,185,129,0.25);
+    background: rgba(5,150,105,0.08);
+    border: 1px solid rgba(5,150,105,0.25);
     border-radius: 20px;
     padding: 3px 10px;
-    font-family: 'Space Mono', monospace;
+    font-family: 'JetBrains Mono', monospace;
     font-size: 0.58rem;
     color: var(--teal);
     text-transform: uppercase;
@@ -165,8 +157,8 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     animation: livepulse 1.8s infinite;
 }
 @keyframes livepulse {
-    0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(16,185,129,0.5); }
-    50% { opacity:0.6; box-shadow: 0 0 0 5px rgba(16,185,129,0); }
+    0%,100% { opacity:1; box-shadow: 0 0 0 0 rgba(5,150,105,0.4); }
+    50% { opacity:0.6; box-shadow: 0 0 0 5px rgba(5,150,105,0); }
 }
 
 /* ── KPI cards ───────────────────────────────── */
@@ -174,47 +166,46 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
 .kpi-card {
     flex: 1;
     position: relative;
-    background: var(--bg2);
+    background: var(--bg0);
     border: 1px solid var(--b0);
-    border-radius: 3px;
-    padding: 14px 16px 12px;
+    border-radius: 8px;
+    padding: 16px 18px 14px;
     overflow: hidden;
-    transition: border-color 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s;
 }
 .kpi-card::after {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
-    height: 2px;
+    height: 3px;
     background: var(--blue);
-    opacity: 0.7;
 }
 .kpi-card.pos::after { background: var(--teal); }
 .kpi-card.neg::after { background: var(--red); }
 .kpi-card.neu::after { background: var(--amber); }
 
 .kpi-label {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.58rem;
-    font-weight: 700;
+    font-size: 0.68rem;
+    font-weight: 600;
     color: var(--t2);
     text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: 9px;
+    letter-spacing: 0.1em;
+    margin-bottom: 8px;
 }
 .kpi-value {
-    font-family: 'Space Mono', monospace;
-    font-size: 1.45rem;
-    font-weight: 700;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.4rem;
+    font-weight: 600;
     color: var(--t0);
-    letter-spacing: -0.03em;
+    letter-spacing: -0.02em;
     line-height: 1;
-    margin-bottom: 7px;
+    margin-bottom: 6px;
 }
-.kpi-delta { font-family: 'Space Mono', monospace; font-size: 0.7rem; }
+.kpi-delta { font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; }
 .kpi-delta.up   { color: var(--teal); }
 .kpi-delta.down { color: var(--red); }
-.kpi-delta.neu  { color: var(--t1); }
+.kpi-delta.neu  { color: var(--t2); }
 
 /* ── Tabs ────────────────────────────────────── */
 [data-testid="stTabs"] [role="tablist"] {
@@ -224,13 +215,13 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     padding: 0 !important;
 }
 [data-testid="stTabs"] [role="tab"] {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.6rem !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.1em !important;
-    text-transform: uppercase !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0 !important;
+    text-transform: none !important;
     color: var(--t2) !important;
-    padding: 10px 16px !important;
+    padding: 10px 18px !important;
     border-radius: 0 !important;
     border-bottom: 2px solid transparent !important;
     margin-bottom: -1px !important;
@@ -240,10 +231,11 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     color: var(--blue) !important;
     border-bottom-color: var(--blue) !important;
     background: transparent !important;
+    font-weight: 600 !important;
 }
 [data-testid="stTabs"] [role="tab"]:hover:not([aria-selected="true"]) {
     color: var(--t1) !important;
-    background: var(--bg2) !important;
+    background: var(--bg1) !important;
 }
 
 /* ── Section headers ─────────────────────────── */
@@ -251,24 +243,23 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 26px 0 14px;
+    margin: 28px 0 16px;
 }
 .sec-head-bar {
-    width: 3px; height: 14px;
+    width: 3px; height: 16px;
     background: var(--blue);
-    border-radius: 2px;
+    border-radius: 3px;
     flex-shrink: 0;
 }
 .sec-head-bar.teal  { background: var(--teal); }
 .sec-head-bar.amber { background: var(--amber); }
 .sec-head-bar.red   { background: var(--red); }
 .sec-head-text {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.62rem;
-    font-weight: 700;
-    color: var(--t1);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--t0);
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    letter-spacing: 0.08em;
 }
 .sec-head-line {
     flex: 1;
@@ -281,10 +272,10 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    background: var(--bg2);
+    background: var(--bg1);
     border: 1px solid var(--b0);
-    border-left: 2px solid var(--blue);
-    border-radius: 0 3px 3px 0;
+    border-left: 3px solid var(--blue);
+    border-radius: 0 6px 6px 0;
     padding: 10px 14px;
     margin: 10px 0;
     font-size: 0.85rem;
@@ -292,24 +283,23 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     line-height: 1.55;
 }
 .signal-icon {
-    font-family: 'Space Mono', monospace;
     font-size: 0.65rem;
     color: var(--blue);
     margin-top: 3px;
     flex-shrink: 0;
 }
-.signal.bull { border-left-color: var(--teal); background: rgba(16,185,129,0.04); }
+.signal.bull { border-left-color: var(--teal); background: rgba(5,150,105,0.04); }
 .signal.bull .signal-icon { color: var(--teal); }
-.signal.bear { border-left-color: var(--red); background: rgba(239,68,68,0.04); }
+.signal.bear { border-left-color: var(--red); background: rgba(220,38,38,0.04); }
 .signal.bear .signal-icon { color: var(--red); }
-.signal.warn { border-left-color: var(--amber); background: rgba(245,158,11,0.04); }
+.signal.warn { border-left-color: var(--amber); background: rgba(217,119,6,0.04); }
 .signal.warn .signal-icon { color: var(--amber); }
 
 /* ── Info / arch blocks ──────────────────────── */
 .info-block {
-    background: var(--bg2);
+    background: var(--bg1);
     border: 1px solid var(--b0);
-    border-radius: 3px;
+    border-radius: 8px;
     padding: 18px 20px;
     margin-bottom: 10px;
     font-size: 0.85rem;
@@ -317,8 +307,7 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     color: var(--t1);
 }
 .info-block .ib-title {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.65rem;
+    font-size: 0.68rem;
     font-weight: 700;
     color: var(--t0);
     text-transform: uppercase;
@@ -329,31 +318,32 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
     border-bottom: 1px solid var(--b0);
 }
 .info-block code {
-    background: var(--bg4);
+    background: var(--bg2);
     border: 1px solid var(--b0);
-    border-radius: 3px;
+    border-radius: 4px;
     padding: 1px 5px;
     font-size: 0.8em;
-    color: var(--amber);
-    font-family: 'Space Mono', monospace;
+    color: var(--blue);
+    font-family: 'JetBrains Mono', monospace;
 }
 
 /* ── Streamlit metric override ───────────────── */
 [data-testid="stMetric"] {
-    background: var(--bg2) !important;
+    background: var(--bg0) !important;
     border: 1px solid var(--b0) !important;
-    border-radius: 3px !important;
+    border-radius: 8px !important;
     padding: 14px 16px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
 }
 [data-testid="stMetricLabel"] p {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.58rem !important;
+    font-size: 0.72rem !important;
+    font-weight: 600 !important;
     text-transform: uppercase !important;
-    letter-spacing: 0.12em !important;
+    letter-spacing: 0.08em !important;
     color: var(--t2) !important;
 }
 [data-testid="stMetricValue"] {
-    font-family: 'Space Mono', monospace !important;
+    font-family: 'JetBrains Mono', monospace !important;
     font-size: 1.25rem !important;
     color: var(--t0) !important;
     letter-spacing: -0.02em !important;
@@ -364,43 +354,36 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
 [data-testid="stSelectbox"] label p,
 [data-testid="stSlider"] label p,
 [data-testid="stCheckbox"] label p {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.6rem !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.1em !important;
-    color: var(--t2) !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
+    color: var(--t1) !important;
 }
 [data-testid="stSelectbox"] > div > div {
-    background: var(--bg2) !important;
+    background: var(--bg0) !important;
     border-color: var(--b0) !important;
-    border-radius: 3px !important;
+    border-radius: 6px !important;
 }
 
 /* ── Dataframes ──────────────────────────────── */
-[data-testid="stDataFrame"] iframe { border-radius: 3px; }
+[data-testid="stDataFrame"] iframe { border-radius: 6px; }
 
 /* ── Expander ────────────────────────────────── */
 [data-testid="stExpander"] {
     border: 1px solid var(--b0) !important;
-    border-radius: 3px !important;
+    border-radius: 8px !important;
     background: var(--bg1) !important;
 }
 [data-testid="stExpander"] summary {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.65rem !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.1em !important;
+    font-size: 0.78rem !important;
+    font-weight: 500 !important;
     color: var(--t1) !important;
 }
 
 /* ── Subheader override ──────────────────────── */
 [data-testid="stMarkdownContainer"] h3 {
-    font-family: 'Space Mono', monospace !important;
-    font-size: 0.65rem !important;
-    font-weight: 700 !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.14em !important;
-    color: var(--t1) !important;
+    font-size: 0.9rem !important;
+    font-weight: 600 !important;
+    color: var(--t0) !important;
     padding-bottom: 10px !important;
     border-bottom: 1px solid var(--b0) !important;
     margin-top: 24px !important;
@@ -408,39 +391,39 @@ html, body, [class*="css"], [data-testid="stAppViewContainer"] * {
 /* Caption */
 [data-testid="stCaptionContainer"] p {
     color: var(--t2) !important;
-    font-size: 0.76rem !important;
+    font-size: 0.78rem !important;
 }
 /* Alert/info */
 [data-testid="stAlert"] {
-    border-radius: 3px !important;
+    border-radius: 6px !important;
 }
 
 /* ── Divider ─────────────────────────────────── */
 hr {
     border: none !important;
     border-top: 1px solid var(--b0) !important;
-    margin: 10px 0 !important;
+    margin: 12px 0 !important;
 }
 </style>
 """)
 
 # ── Chart style helper ────────────────────────────────────────────────────────
 def _c(fig, height=None, legend_h=False):
-    """Apply terminal chart style."""
+    """Apply light chart style."""
     fig.update_layout(
-        paper_bgcolor="#05080f",
-        plot_bgcolor="#05080f",
-        font=dict(family="Space Mono, monospace", color="#3d5070", size=10),
-        xaxis=dict(gridcolor="#111829", linecolor="#192540",
-                   tickfont=dict(color="#3d5070", size=9), showgrid=True),
-        yaxis=dict(gridcolor="#111829", linecolor="#192540",
-                   tickfont=dict(color="#3d5070", size=9), showgrid=True),
-        hoverlabel=dict(bgcolor="#0d1220", bordercolor="#1e2e4e",
-                        font=dict(family="Space Mono, monospace",
-                                  color="#d8e3f5", size=11)),
-        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="#192540",
-                    font=dict(family="Space Mono, monospace", size=9,
-                              color="#7d93b8"),
+        paper_bgcolor="#ffffff",
+        plot_bgcolor="#f8f9fc",
+        font=dict(family="Inter, sans-serif", color="#64748b", size=11),
+        xaxis=dict(gridcolor="#e2e8f0", linecolor="#e2e8f0",
+                   tickfont=dict(color="#94a3b8", size=10), showgrid=True),
+        yaxis=dict(gridcolor="#e2e8f0", linecolor="#e2e8f0",
+                   tickfont=dict(color="#94a3b8", size=10), showgrid=True),
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor="#e2e8f0",
+                        font=dict(family="Inter, sans-serif",
+                                  color="#0f172a", size=12)),
+        legend=dict(bgcolor="rgba(255,255,255,0)", bordercolor="#e2e8f0",
+                    font=dict(family="Inter, sans-serif", size=10,
+                              color="#64748b"),
                     orientation="h" if legend_h else "v",
                     y=1.04 if legend_h else None),
         hovermode="x unified",
