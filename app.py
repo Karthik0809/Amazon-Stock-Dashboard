@@ -1789,53 +1789,54 @@ with tab_wf:
             except Exception as _shap_e:
                 st.warning(f"SHAP analysis unavailable: {_shap_e}")
 
-            # Walk-forward validation
-            st.markdown(_sec("Walk-Forward Validation · LR vs XGBoost", "amber"), unsafe_allow_html=True)
-            with st.spinner("Running rolling walk-forward validation…"):
-                wf_dates, wf_actual, wf_lr, wf_xgb = walk_forward_validation(df)
-
-            if len(wf_dates) > 0:
-                wf1, wf2, wf3, wf4 = st.columns(4)
-                wf1.metric("LR RMSE ($)",  f"{np.sqrt(mean_squared_error(wf_actual, wf_lr)):.2f}")
-                wf2.metric("XGB RMSE ($)", f"{np.sqrt(mean_squared_error(wf_actual, wf_xgb)):.2f}")
-                wf3.metric("LR MAPE (%)",  f"{mape(wf_actual, wf_lr):.2f}")
-                wf4.metric("XGB MAPE (%)", f"{mape(wf_actual, wf_xgb):.2f}")
-
-                fig_wf = go.Figure()
-                fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_actual, name="Actual",
-                                             line=dict(color="#d8e3f5", width=2)))
-                fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_lr, name="LR (Walk-Fwd)",
-                                             line=dict(color="#f59e0b", width=1.5, dash="dot")))
-                fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_xgb, name="XGBoost (Walk-Fwd)",
-                                             line=dict(color="#10b981", width=1.5, dash="dot")))
-                _c(fig_wf, legend_h=True)
-                fig_wf.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-                st.plotly_chart(fig_wf, width='stretch')
-
-                wf_df_tmp = pd.DataFrame({"actual": wf_actual, "lr": wf_lr, "xgb": wf_xgb},
-                                          index=pd.to_datetime(wf_dates))
-                wf_df_tmp["lr_err2"]  = (wf_df_tmp["actual"] - wf_df_tmp["lr"])**2
-                wf_df_tmp["xgb_err2"] = (wf_df_tmp["actual"] - wf_df_tmp["xgb"])**2
-                roll_rmse_lr  = wf_df_tmp["lr_err2"].rolling(63).mean().apply(np.sqrt)
-                roll_rmse_xgb = wf_df_tmp["xgb_err2"].rolling(63).mean().apply(np.sqrt)
-                fig_rrmse = go.Figure()
-                fig_rrmse.add_trace(go.Scatter(x=roll_rmse_lr.index, y=roll_rmse_lr,
-                                                name="LR RMSE",  line=dict(color="#f59e0b", width=1.5)))
-                fig_rrmse.add_trace(go.Scatter(x=roll_rmse_xgb.index, y=roll_rmse_xgb,
-                                                name="XGB RMSE", line=dict(color="#10b981", width=1.5)))
-                _c(fig_rrmse, legend_h=True)
-                fig_rrmse.update_layout(yaxis_title="RMSE ($)")
-                st.plotly_chart(fig_rrmse, width='stretch')
-
-                better = "XGBoost" if mape(wf_actual, wf_xgb) < mape(wf_actual, wf_lr) else "Linear Regression"
-                st.markdown(_sig(
-                    f"<strong>{better}</strong> achieves lower MAPE across walk-forward windows. "
-                    f"Walk-forward is more rigorous than a single train-test split — it simulates live retraining.", "bull"
-                ), unsafe_allow_html=True)
-
         except Exception as _wf_err:
             st.error(f"Walk-Forward error: {_wf_err}")
             st.code(_tb_wf.format_exc())
+
+    # ── Walk-Forward Validation (always visible, cached) ─────────────────────────
+    st.markdown(_sec("Walk-Forward Validation · LR vs XGBoost", "amber"), unsafe_allow_html=True)
+    st.caption("Rolling 252-day train window, 21-day step — model retrained on every window, never sees future data.")
+    with st.spinner("Running rolling walk-forward validation…"):
+        wf_dates, wf_actual, wf_lr, wf_xgb = walk_forward_validation(df)
+
+    if len(wf_dates) > 0:
+        wf1, wf2, wf3, wf4 = st.columns(4)
+        wf1.metric("LR RMSE ($)",  f"{np.sqrt(mean_squared_error(wf_actual, wf_lr)):.2f}")
+        wf2.metric("XGB RMSE ($)", f"{np.sqrt(mean_squared_error(wf_actual, wf_xgb)):.2f}")
+        wf3.metric("LR MAPE (%)",  f"{mape(wf_actual, wf_lr):.2f}")
+        wf4.metric("XGB MAPE (%)", f"{mape(wf_actual, wf_xgb):.2f}")
+
+        fig_wf = go.Figure()
+        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_actual, name="Actual",
+                                     line=dict(color="#0f172a", width=2)))
+        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_lr, name="LR (Walk-Fwd)",
+                                     line=dict(color="#f59e0b", width=1.5, dash="dot")))
+        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_xgb, name="XGBoost (Walk-Fwd)",
+                                     line=dict(color="#10b981", width=1.5, dash="dot")))
+        _c(fig_wf, legend_h=True)
+        fig_wf.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
+        st.plotly_chart(fig_wf, width='stretch')
+
+        wf_df_tmp = pd.DataFrame({"actual": wf_actual, "lr": wf_lr, "xgb": wf_xgb},
+                                  index=pd.to_datetime(wf_dates))
+        wf_df_tmp["lr_err2"]  = (wf_df_tmp["actual"] - wf_df_tmp["lr"])**2
+        wf_df_tmp["xgb_err2"] = (wf_df_tmp["actual"] - wf_df_tmp["xgb"])**2
+        roll_rmse_lr  = wf_df_tmp["lr_err2"].rolling(63).mean().apply(np.sqrt)
+        roll_rmse_xgb = wf_df_tmp["xgb_err2"].rolling(63).mean().apply(np.sqrt)
+        fig_rrmse = go.Figure()
+        fig_rrmse.add_trace(go.Scatter(x=roll_rmse_lr.index, y=roll_rmse_lr,
+                                        name="LR RMSE",  line=dict(color="#f59e0b", width=1.5)))
+        fig_rrmse.add_trace(go.Scatter(x=roll_rmse_xgb.index, y=roll_rmse_xgb,
+                                        name="XGB RMSE", line=dict(color="#10b981", width=1.5)))
+        _c(fig_rrmse, legend_h=True)
+        fig_rrmse.update_layout(yaxis_title="Rolling 63-Day RMSE ($)")
+        st.plotly_chart(fig_rrmse, width='stretch')
+
+        better = "XGBoost" if mape(wf_actual, wf_xgb) < mape(wf_actual, wf_lr) else "Linear Regression"
+        st.markdown(_sig(
+            f"<strong>{better}</strong> achieves lower MAPE across walk-forward windows. "
+            f"Walk-forward is more rigorous than a single train-test split — it simulates live retraining.", "bull"
+        ), unsafe_allow_html=True)
 
     # ── Multi-Ticker Generalisation ──────────────────────────────────────────────
     st.markdown(_sec("Generalisation · Walk-Forward Across AMZN, MSFT, GOOGL", "purple"), unsafe_allow_html=True)
