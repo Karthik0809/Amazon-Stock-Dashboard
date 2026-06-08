@@ -1,88 +1,88 @@
-# AMZN · Intelligence Terminal
+# AMZN Stock Forecasting & Analytics Dashboard
 
-> A production-grade, ML-powered stock analytics dashboard for **Amazon (AMZN)** — built with PyTorch, Streamlit, and quantitative finance techniques used in real trading desks.
+> An end-to-end machine learning pipeline that benchmarks four forecasting approaches on Amazon (AMZN) price data, deployed as an interactive dashboard.
 
 <p align="center">
   <a href="https://amazonstock-dashboard.streamlit.app/">
     <img src="https://static.streamlit.io/badges/streamlit_badge_black_white.svg" alt="Open in Streamlit" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" />
   &nbsp;
-  <img src="https://img.shields.io/badge/PyTorch-LSTM%20%7C%20Seq2Seq-EE4C2C?logo=pytorch&logoColor=white" alt="PyTorch" />
+  <img src="https://img.shields.io/badge/PyTorch-LSTM%20%7C%20Seq2Seq-EE4C2C?logo=pytorch&logoColor=white" />
   &nbsp;
-  <img src="https://img.shields.io/badge/Deployed-Streamlit%20Cloud-FF4B4B?logo=streamlit&logoColor=white" alt="Streamlit Cloud" />
+  <img src="https://img.shields.io/badge/Deployed-Streamlit%20Cloud-FF4B4B?logo=streamlit&logoColor=white" />
 </p>
 
----
-
-## 🔗 Live App
-
-**[▸ Launch Dashboard](https://amazonstock-dashboard.streamlit.app/)**
+**[▸ Live App](https://amazonstock-dashboard.streamlit.app/)**
 
 ---
 
-## What This Project Demonstrates
+## Problem Statement
 
-This dashboard showcases a full data-science pipeline — from raw market data ingestion through feature engineering, deep learning forecasting, quantitative risk modelling, and an interactive terminal-style UI.
+Stock price forecasting is a hard time-series problem — prices are non-stationary, noisy, and influenced by factors outside any feature set. The goal of this project was not to "beat the market" but to rigorously compare forecasting approaches, understand where each breaks down, and build production-quality tooling around them.
 
-Designed to be **resume-worthy for a Data Scientist / Quantitative Analyst role**, covering:
+**Core question:** On a real equity time series, does a deep learning model (LSTM, Seq2Seq) actually outperform a well-tuned classical baseline (Linear Regression, XGBoost), and under what conditions?
 
-| Domain | Techniques Used |
+---
+
+## Approach & Methodology
+
+### Data
+- Source: Yahoo Finance via `yfinance`, with a local CSV fallback to handle API rate limits on cloud deployments
+- ~5 years of daily OHLCV data for AMZN
+- Train/test split: strictly chronological 80/20 — no shuffling, no future data leakage
+
+### Feature Engineering
+Built 10+ technical features from raw OHLCV:
+
+| Feature | Description |
 |---|---|
-| **ML / Deep Learning** | PyTorch LSTM, Seq2Seq Encoder-Decoder, Linear Regression |
-| **Time-Series Forecasting** | Autoregressive multi-step prediction, 80/20 chronological split |
-| **Quantitative Risk** | Sharpe, Sortino, Calmar ratio, VaR 95%/99%, CVaR, Max Drawdown |
-| **Statistical Analysis** | Shapiro-Wilk normality test, ACF (EMH testing), skewness, kurtosis |
-| **Simulation** | Monte Carlo GBM — 500 paths, P10/P50/P90 percentile fan |
-| **Feature Engineering** | RSI, MACD, Bollinger Bands, EMA, ATR, volume signals |
-| **NLP** | News sentiment analysis via TextBlob + Yahoo RSS feed |
-| **Anomaly Detection** | Z-score rolling window flagging of unusual price events |
-| **Signal Engineering** | 7-indicator scorecard, pivot points, volatility regime detection |
-| **Portfolio Analytics** | P&L simulator, position sizing, projected value at forecast horizon |
-| **Data Visualisation** | Plotly interactive charts, custom dark terminal theme |
+| RSI | Momentum oscillator — identifies overbought/oversold conditions |
+| MACD / Signal | Trend-following momentum indicator |
+| Bollinger Band Width | Measures volatility relative to recent price |
+| MA Ratio (20/50) | Short vs medium-term trend relationship |
+| Volume Ratio | Current vs 20-day average volume |
+| 30D Rolling Volatility | Annualised standard deviation of returns |
+| Price vs MA30/MA90 | Distance from moving averages (mean-reversion signal) |
+
+### Models Compared
+
+| Model | Type | Key Design Choice |
+|---|---|---|
+| Linear Regression | Baseline | Analytical confidence intervals via prediction std |
+| One-Step LSTM | Deep Learning | PyTorch, trained on 5-feature sequences; residual-based confidence bands |
+| Seq2Seq LSTM | Deep Learning | Encoder-Decoder architecture for direct multi-step prediction (avoids error accumulation) |
+| XGBoost | Ensemble | RandomizedSearchCV hyperparameter tuning; walk-forward validation |
+
+### Evaluation
+- Metrics: RMSE, MAPE, R²
+- Walk-forward validation on XGBoost to simulate real deployment conditions (rolling retrain on expanding window)
+- Visual actual vs. predicted overlays with strict train/test shading
 
 ---
 
-## Features
+## Key Findings
 
-### 🔮 Forecast Tab
-- **Linear Regression** baseline with analytical confidence intervals
-- **One-Step LSTM** — PyTorch LSTM trained on 5 features (OHLCV), residual-based confidence bands
-- **Seq2Seq LSTM** — Encoder-Decoder architecture for direct multi-step horizon forecasting
-- Adjustable forecast horizon (1–30 days) and lookback window
+- **Linear Regression is a surprisingly strong baseline** — on trending data, a simple regression on recent prices captures the direction well and is hard to beat on RMSE alone
+- **LSTM models overfit on short sequences** — with ~5 years of daily data, the deep learning models have relatively little data to generalise; they tend to lag price turns
+- **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct multi-step prediction avoids the compounding error of autoregressive rollout
+- **XGBoost benefits most from feature engineering** — the 10+ technical features give it signal the regression models can't use, and it captures non-linear interactions well
+- **No model reliably predicts turning points** — all models perform worse at market inflection points, consistent with the efficient market hypothesis
 
-### 📉 Technical Analysis Tab
-- Candlestick chart with 20/50/200-day moving averages + Bollinger Bands
-- RSI with overbought/oversold zones · MACD histogram with crossover signals
-- Volume bars with colour coding
+---
 
-### 📊 Risk Analytics Tab
-- Full scorecard: Sharpe, Sortino, Max Drawdown, Calmar, VaR 95%, CVaR
-- Return distribution with Shapiro-Wilk normality test, skewness & kurtosis
-- ACF plot (Efficient Market Hypothesis test)
-- **Rolling 30-Day VaR** — shows how tail risk evolves over time
-- **Volatility Regime Detection** — 30D vs 90D rolling vol with regime shading (high/low vol periods)
-- Random Forest feature importance (200 trees, mean decrease in impurity)
+## Beyond Forecasting
 
-### 🌐 Market Context Tab
-- Peer comparison: AMZN vs MSFT, GOOGL, META, AAPL, SPY (normalised to 100)
-- Rolling 60-day correlation heatmap · Beta vs SPY
-- Monthly returns heatmap (year × month grid)
+The dashboard also includes supporting analyses that provide context for the forecasts:
 
-### 🤖 Model Performance Tab
-- RMSE and MAPE across all three models with visual bar comparison
-- Actual vs Predicted overlay — strict train/test shading, no data leakage
-
-### 📡 Signals & Anomalies Tab *(new)*
-- **Signal Scorecard** — consolidated bull/bear verdict across 7 indicators (RSI, MACD, Bollinger Bands, MA crossover, Price vs MA90, Volume, Volatility)
-- **Support & Resistance** — classic floor-trader pivot points (PP, R1/R2/R3, S1/S2/S3) plotted on last 60 days of price
-- **Anomaly Detection** — Z-score on 20-day rolling window flags statistically unusual price moves (±2.5σ), plotted as triangles on price chart with a sortable event table
-- **Portfolio P&L Simulator** — enter shares held + avg cost basis, see unrealised P&L and projected value at any forecast horizon
-
-### 📰 News & Sentiment Tab
-- Live Yahoo Finance RSS feed filtered for AMZN headlines
-- Per-article TextBlob sentiment scores + aggregated chart
+- **Risk Analytics** — Sharpe, Sortino, Max Drawdown, VaR 95%/99%, CVaR; return distribution normality testing (Shapiro-Wilk); ACF for autocorrelation structure
+- **Volatility Regime Detection** — 30D vs 90D rolling vol with high-vol period shading; helps contextualise model performance across market regimes
+- **Anomaly Detection** — Z-score rolling window (20-day, ±2.5σ) flags statistically unusual price events
+- **Signal Scorecard** — 7-indicator consensus (RSI, MACD, Bollinger Bands, MA crossover, Volume, Volatility) gives a quick directional read
+- **Monte Carlo Simulation** — 500 GBM paths with P10/P50/P90 fan for probabilistic price range estimation
+- **News Sentiment** — Live Yahoo Finance RSS feed with FinBERT (transformer-based) sentiment scoring per article
+- **Peer Comparison** — AMZN vs MSFT, GOOGL, META, AAPL, SPY normalised performance and correlation matrix
 
 ---
 
@@ -90,21 +90,33 @@ Designed to be **resume-worthy for a Data Scientist / Quantitative Analyst role*
 
 ```
 Amazon-Stock-Dashboard/
-├── app.py                  # Streamlit app — all tabs, UI, ML inference
+├── app.py                  # Streamlit app — all tabs, UI, caching, ML inference
 ├── model.py                # One-Step LSTM definition (PyTorch)
-├── seq2seq_lstm.py         # Seq2Seq Encoder-Decoder + make_multi_sequences()
-├── amazon_lstm_model.pth   # Trained One-Step LSTM weights
-├── seq2seq_lstm.pth        # Trained Seq2Seq weights
+├── seq2seq_lstm.py         # Seq2Seq Encoder-Decoder architecture
+├── amazon_lstm_model.pth   # Pre-trained One-Step LSTM weights
+├── seq2seq_lstm.pth        # Pre-trained Seq2Seq weights
 ├── amazon_stock.csv        # Historical AMZN data (rate-limit fallback)
-└── requirements.txt        # Python dependencies
+└── requirements.txt
 ```
 
 **Data flow:**
 ```
-yfinance API  ──▶  Feature Engineering  ──▶  MinMaxScaler  ──▶  LSTM / LR
-     │                                                                │
-     └── (rate-limit fallback) amazon_stock.csv              Risk · Charts · UI
+yfinance API  ──▶  Feature Engineering  ──▶  MinMaxScaler  ──▶  LSTM / LR / XGBoost
+     │                                                                    │
+     └── (rate-limit fallback) amazon_stock.csv           Risk · Charts · Dashboard
 ```
+
+---
+
+## Engineering Notes
+
+A few non-obvious decisions made during development:
+
+- **Chronological train/test split** — shuffling would leak future prices into training; all splits preserve time ordering
+- **LSTM autoregressive rollout fix** — multi-step rollout updates the Close feature at the correct index; an off-by-one bug caused trend inversions in early versions
+- **Volatility regime batching** — initial implementation called `add_vrect()` ~500 times (once per trading day), blocking all subsequent tab renders for 10–30s; fixed by merging consecutive high-vol days into single rectangles
+- **Streamlit caching strategy** — heavy functions (LSTM inference, Monte Carlo, risk metrics) are `@st.cache_data(ttl=3600)` to avoid re-running on every tab click
+- **XGBoost memory constraint** — `n_jobs=1` and reduced CV folds to fit within Streamlit Cloud's 1GB RAM limit
 
 ---
 
@@ -123,54 +135,28 @@ App runs at `http://localhost:8501`
 
 ---
 
-## Deploy on Streamlit Cloud (Free)
-
-1. Go to [share.streamlit.io](https://share.streamlit.io) → sign in with GitHub → **New app**
-2. Select repo `Karthik0809/Amazon-Stock-Dashboard` · branch `main` · file `app.py`
-3. Click **Deploy** — no servers, no credit card, no config needed
-
-> **Note**: yfinance is sometimes rate-limited on Streamlit Cloud's shared IPs. The app automatically falls back to the bundled `amazon_stock.csv` so it never crashes.
-
----
-
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | Streamlit 1.31+, custom CSS dark terminal theme |
+| App framework | Streamlit 1.58, custom CSS dark theme |
 | Charts | Plotly (fully interactive) |
-| Deep Learning | PyTorch 2.x — LSTM, Seq2Seq |
-| Classical ML | scikit-learn — Linear Regression, Random Forest |
+| Deep Learning | PyTorch — LSTM, Seq2Seq Encoder-Decoder |
+| Classical ML | scikit-learn — Linear Regression, Random Forest; XGBoost |
+| NLP | HuggingFace Transformers (FinBERT), feedparser |
+| Statistics | SciPy, StatsModels |
 | Market Data | yfinance + CSV fallback |
-| Technical Indicators | `ta` library (RSI, MACD, Bollinger Bands, ATR) |
-| NLP | TextBlob + feedparser |
-| Statistics | SciPy, StatsModels, NumPy, Pandas |
-
----
-
-## Key Engineering Decisions
-
-- **No data leakage** — train/test split is strictly chronological (80/20); no future data seen during training
-- **LSTM autoregressive fix** — multi-step rollout updates feature index 3 (Close), not index 4 (Volume), fixing a trend-direction inversion bug
-- **Length-safe masking** — prediction arrays clipped before masking to handle variable yfinance response sizes on cloud deployments
-- **CSS via `st.html()`** — style injection bypasses Streamlit Cloud's CSP stripping of `<style>` tags in `st.markdown()`
-- **Graceful degradation** — all network calls (peers, news, live data) fail silently to cached or local state
+| Deployment | Streamlit Cloud (free tier) |
 
 ---
 
 ## Connect
 
-**Karthik Mulugu** — Data Scientist  
-📧 karthikmulugu14@gmail.com  
-🔗 [LinkedIn](https://www.linkedin.com/in/karthikmulugu/)  
+**Karthik Mulugu**
+📧 karthikmulugu14@gmail.com
+🔗 [LinkedIn](https://www.linkedin.com/in/karthikmulugu/)
 🐙 [GitHub](https://github.com/Karthik0809)
 
 ---
 
-## License
-
-MIT — free to use, modify, and distribute. See [LICENSE](LICENSE) for details.
-
----
-
-> ⚠️ **Disclaimer**: Educational project only. Not financial advice. Past performance does not guarantee future results.
+> ⚠️ **Disclaimer**: Educational project only. Not financial advice.
