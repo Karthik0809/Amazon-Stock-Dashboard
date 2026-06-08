@@ -499,33 +499,17 @@ def load_data():
 
 @st.cache_data(ttl=3600)
 def load_peers():
-    """Load peer Close prices. AMZN always available from CSV; others via yfinance."""
+    """Load peer Close prices. Returns whatever tickers succeed; never raises."""
     frames = {}
-
-    # AMZN — always available from the main df (passed as csv fallback)
-    try:
-        amzn = _csv_fallback()["Close"]
-        amzn.index = pd.to_datetime(amzn.index).tz_localize(None)
-        # trim to last 1 year
-        cutoff = amzn.index[-1] - pd.DateOffset(years=1)
-        frames["AMZN"] = amzn[amzn.index >= cutoff]
-    except Exception:
-        pass
-
-    # Other peers — best-effort via yfinance
     for t in [p for p in PEERS if p != "AMZN"]:
         try:
             d = _yf_fetch(t, "1y")
             frames[t] = d["Close"]
         except Exception:
             pass
-
     if not frames:
         return pd.DataFrame()
-
-    peer_df = pd.DataFrame(frames)
-    # forward-fill small gaps, drop rows where ALL are NaN
-    peer_df = peer_df.ffill().dropna(how="all")
+    peer_df = pd.DataFrame(frames).ffill().dropna(how="all")
     return peer_df
 
 @st.cache_data(ttl=1800)
@@ -1323,26 +1307,39 @@ with tab_risk:
 # TAB 4 — MARKET CONTEXT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_mkt:
-    with st.spinner("Loading peer data…"):
-        peers_df = load_peers()
+    try:
+        with st.spinner("Loading peer data…"):
+            peers_raw = load_peers()
 
-    if peers_df.empty:
-        peers_df = pd.DataFrame({"AMZN": df["Close"]})
+        # AMZN is always available from the main df — use it directly
+        amzn_series = df["Close"].copy()
+        amzn_series.name = "AMZN"
 
-    # Always ensure AMZN is present using main df (most up-to-date)
-    peers_df["AMZN"] = df["Close"].reindex(peers_df.index, method="ffill")
+        if peers_raw.empty:
+            # Only AMZN available
+            peers_df = amzn_series.to_frame()
+            st.markdown(_sig("yfinance rate-limited — peer tickers unavailable. Showing AMZN data only. Refresh in a few minutes.", "warn"), unsafe_allow_html=True)
+        else:
+            # Align AMZN with peers on their common date range
+            peers_df = peers_raw.copy()
+            # Reindex AMZN to peer index (inner join dates)
+            common_idx = peers_df.index.intersection(amzn_series.index)
+            if len(common_idx) > 10:
+                peers_df = peers_df.loc[common_idx].copy()
+                peers_df["AMZN"] = amzn_series.loc[common_idx]
+            else:
+                # No overlap — just use AMZN standalone
+                peers_df = amzn_series.to_frame()
 
-    # Drop rows where every column is NaN, then forward-fill remaining gaps
-    peers_df = peers_df.dropna(how="all").ffill()
+        # Forward-fill any remaining gaps, drop all-NaN rows
+        peers_df = peers_df.ffill().dropna(how="all")
 
-    # Find the first row where ALL columns have data (common start)
-    first_valid = peers_df.dropna(how="any").index[0] if not peers_df.dropna(how="any").empty else peers_df.index[0]
-    peers_df = peers_df.loc[first_valid:]
+        # Trim to common start (first row where every column is valid)
+        any_valid = peers_df.dropna(how="any")
+        if not any_valid.empty:
+            peers_df = peers_df.loc[any_valid.index[0]:]
 
-    if len(peers_df.columns) < 2:
-        st.markdown(_sig("yfinance rate-limited — only AMZN data available. Peer comparison shows AMZN only. Refresh in a few minutes to load all peers.", "warn"), unsafe_allow_html=True)
-
-    if True:  # always render — never shows blank tab
+        if True:  # always render
         st.markdown(_sec("Relative Performance · Normalised to 100"), unsafe_allow_html=True)
         # Divide by first row (now guaranteed non-NaN)
         norm_peers = peers_df.div(peers_df.iloc[0]) * 100
@@ -1480,6 +1477,11 @@ with tab_mkt:
                 f"Hedge ratio: <strong>{best['Hedge Ratio']}</strong>, Spread half-life: <strong>{best['Half-Life']}</strong>. "
                 f"{'Statistically cointegrated — spread is mean-reverting, enabling pair trade signals.' if coint_flag else 'Not cointegrated at 5% — no reliable long-run equilibrium.'}", cv
             ), unsafe_allow_html=True)
+
+    except Exception as _mkt_err:
+        import traceback
+        st.error(f"Market Context error: {_mkt_err}")
+        st.code(traceback.format_exc())
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — WALK-FORWARD VALIDATION + XGBOOST
