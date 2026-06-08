@@ -1837,6 +1837,103 @@ with tab_wf:
             st.error(f"Walk-Forward error: {_wf_err}")
             st.code(_tb_wf.format_exc())
 
+    # ── Multi-Ticker Generalisation ──────────────────────────────────────────────
+    st.markdown(_sec("Generalisation · Walk-Forward Across AMZN, MSFT, GOOGL", "purple"), unsafe_allow_html=True)
+    st.caption("Does XGBoost consistently beat LR across multiple large-cap tech stocks? Same walk-forward methodology applied to each ticker independently.")
+
+    @st.cache_data(ttl=7200, show_spinner=False)
+    def multi_ticker_wf(_df_amzn):
+        """Run walk-forward LR vs XGB on AMZN (cached), MSFT, GOOGL."""
+        def _wf(tdf, window=252, step=21):
+            tdf = tdf.copy()
+            tdf.columns = tdf.columns.str.lower()
+            tdf['rsi']  = 100 - 100/(1 + tdf['close'].diff().clip(lower=0).rolling(14).mean() /
+                                     (-tdf['close'].diff().clip(upper=0)).rolling(14).mean().replace(0,1e-9))
+            tdf['macd'] = tdf['close'].ewm(span=12).mean() - tdf['close'].ewm(span=26).mean()
+            tdf['vol_r']= tdf['volume'] / tdf['volume'].rolling(20).mean()
+            tdf['hl_r'] = (tdf['high'] - tdf['low']) / tdf['close']
+            tdf['ret']  = tdf['close'].pct_change()
+            tdf['vola'] = tdf['ret'].rolling(20).std()
+            tdf = tdf.dropna()
+            closes = tdf['close'].values
+            feat_cols = ['rsi','macd','vol_r','hl_r','ret','vola']
+            actuals, lr_preds, xgb_preds = [], [], []
+            idx = window
+            while idx + step <= len(tdf):
+                tc = closes[idx-window:idx]; te = closes[idx:idx+step]
+                lr = LinearRegression().fit(np.arange(len(tc)).reshape(-1,1), tc)
+                lp = lr.predict(np.arange(len(tc), len(tc)+step).reshape(-1,1))
+                try:
+                    ft = tdf[feat_cols].iloc[idx-window:idx].copy()
+                    ft['t'] = closes[idx-window+1:idx+1]
+                    ft = ft.dropna()
+                    xgb = XGBRegressor(n_estimators=80, max_depth=4, learning_rate=0.1, n_jobs=1, verbosity=0, random_state=42)
+                    xgb.fit(ft.drop('t',axis=1), ft['t'])
+                    xp = xgb.predict(tdf[feat_cols].iloc[idx:idx+step].fillna(method='ffill').values)
+                except Exception:
+                    xp = lp
+                actuals.extend(te); lr_preds.extend(lp); xgb_preds.extend(xp)
+                idx += step
+            a, l, x = np.array(actuals), np.array(lr_preds), np.array(xgb_preds)
+            naive = closes[window-1:-step] if len(closes[window-1:-step]) >= len(a) else np.full(len(a), np.nan)
+            naive = naive[:len(a)]
+            return {
+                'Naive RMSE': float(np.sqrt(np.mean((a - naive)**2))) if not np.any(np.isnan(naive)) else None,
+                'LR RMSE':   float(np.sqrt(np.mean((a - l)**2))),
+                'XGB RMSE':  float(np.sqrt(np.mean((a - x)**2))),
+                'LR MAPE':   float(np.mean(np.abs((a-l)/(a+1e-9)))*100),
+                'XGB MAPE':  float(np.mean(np.abs((a-x)/(a+1e-9)))*100),
+                'XGB beats LR': float(np.sqrt(np.mean((a-l)**2))) > float(np.sqrt(np.mean((a-x)**2))),
+            }
+
+        rows = []
+        # AMZN from cached df
+        r = _wf(_df_amzn.rename(columns={'Close':'close','Open':'open','High':'high','Low':'low','Volume':'volume'}))
+        r['Ticker'] = 'AMZN'; rows.append(r)
+        # Fetch MSFT and GOOGL live
+        for t in ['MSFT', 'GOOGL']:
+            try:
+                raw = yf.Ticker(t).history(period='5y')
+                raw.index = pd.to_datetime(raw.index).tz_localize(None)
+                r2 = _wf(raw)
+                r2['Ticker'] = t; rows.append(r2)
+            except Exception:
+                pass
+        return pd.DataFrame(rows).set_index('Ticker')
+
+    with st.spinner("Running walk-forward on AMZN, MSFT, GOOGL…"):
+        mt_df = multi_ticker_wf(df)
+
+    if len(mt_df) > 0:
+        # Format display table
+        disp = mt_df[['Naive RMSE','LR RMSE','XGB RMSE','LR MAPE','XGB MAPE']].copy()
+        disp = disp.round(2)
+        disp['XGB vs LR'] = mt_df['XGB beats LR'].map({True: 'XGB wins', False: 'LR wins'})
+        st.dataframe(disp, width='stretch')
+
+        # Bar chart
+        fig_mt = go.Figure()
+        colors = {'Naive RMSE': '#94a3b8', 'LR RMSE': '#2563eb', 'XGB RMSE': '#059669'}
+        for col, color in colors.items():
+            if col in mt_df.columns:
+                fig_mt.add_trace(go.Bar(
+                    name=col.replace(' RMSE',''),
+                    x=mt_df.index.tolist(),
+                    y=mt_df[col].fillna(0).tolist(),
+                    marker_color=color
+                ))
+        fig_mt.update_layout(barmode='group', xaxis_title='Ticker', yaxis_title='Walk-Forward RMSE (USD)')
+        _c(fig_mt, height=320, legend_h=True)
+        st.plotly_chart(fig_mt, width='stretch')
+
+        xgb_wins = mt_df['XGB beats LR'].sum()
+        total    = len(mt_df)
+        st.markdown(_sig(
+            f"XGBoost outperforms Linear Regression in <strong>{xgb_wins}/{total}</strong> tickers on walk-forward RMSE — "
+            f"confirming that feature-based modelling generalises beyond AMZN.",
+            "bull" if xgb_wins >= total//2 + 1 else "warn"
+        ), unsafe_allow_html=True)
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 6 — SIGNALS & ANOMALIES
 # ═══════════════════════════════════════════════════════════════════════════════

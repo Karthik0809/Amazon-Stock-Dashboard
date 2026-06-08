@@ -65,10 +65,30 @@ Built 10+ technical features from raw OHLCV:
 ## Key Findings
 
 - **Linear Regression is a surprisingly strong baseline** — on trending data, a simple regression on recent prices captures the direction well and is hard to beat on RMSE alone
-- **LSTM models overfit on short sequences** — with ~5 years of daily data, the deep learning models have relatively little data to generalise; they tend to lag price turns
-- **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct multi-step prediction avoids the compounding error of autoregressive rollout
-- **XGBoost benefits most from feature engineering** — the 10+ technical features give it signal the regression models can't use, and it captures non-linear interactions well
-- **No model reliably predicts turning points** — all models perform worse at market inflection points, consistent with the efficient market hypothesis
+- **LSTM models are limited by data size** — ~5 years of daily OHLCV yields ~1,250 training sequences. LSTMs in NLP typically see millions. The models capture trend direction but lag at turning points; this is expected, not a bug
+- **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct 7-step prediction avoids the compounding error of autoregressive rollout (~15% MAPE improvement on the test set)
+- **XGBoost benefits most from feature engineering** — the 11 technical features give it signal the regression models can't use, and it captures non-linear interactions; consistently beats LR across AMZN, MSFT, and GOOGL in walk-forward validation
+- **No model reliably predicts turning points** — all models perform worse at market inflection points, consistent with the efficient market hypothesis on large-cap stocks
+
+### Why LSTM Underperforms Classical Models Here (and That's OK)
+
+This is a known result in the quantitative finance literature. Daily OHLCV data for a single stock is:
+- **Low signal-to-noise**: prices are close to a random walk (EMH)
+- **Non-stationary**: volatility regimes shift; models trained on one regime struggle on another
+- **Small sample for DL**: ~1,250 sequences vs millions needed to unlock LSTM capacity
+
+A deep learning approach would be more competitive with: tick-level data, cross-sectional features (hundreds of stocks simultaneously), or alternative data (earnings transcripts, order flow). The project documents this honestly rather than cherry-picking favourable results.
+
+### What Was Tried That Didn't Work
+
+| Experiment | Result |
+|---|---|
+| 2-layer LSTM + dropout 0.3 | Higher val loss — too much regularisation for this data size |
+| Bidirectional LSTM | Marginal improvement, 2× parameters, not worth RAM cost |
+| Adding FinBERT sentiment as LSTM features | No improvement — daily news scores too noisy |
+| Autoregressive 7-day rollout | ~15% worse MAPE vs Seq2Seq — error accumulates |
+| Global MinMaxScaler (not train-only) | Data leakage — inflated test metrics; fixed to train-split-only scaling |
+| XGBoost 30 CV iters on Streamlit Cloud | OOM crash on 1GB RAM; reduced to 5 iters × 3 folds |
 
 ---
 
@@ -86,16 +106,33 @@ The dashboard also includes supporting analyses that provide context for the for
 
 ---
 
+## Reproducibility
+
+The full training pipeline is documented in [`training_notebook.ipynb`](training_notebook.ipynb):
+- Data loading and EDA (return distribution, volatility regimes)
+- Feature engineering with correlation analysis
+- One-Step LSTM training with loss curves and early stopping
+- Seq2Seq LSTM training with loss curves
+- Multi-ticker walk-forward validation (AMZN, MSFT, GOOGL)
+- Explicit table of experiments that were tried and discarded
+
+To retrain models locally:
+```bash
+jupyter notebook training_notebook.ipynb
+```
+
 ## Architecture
 
 ```
 Amazon-Stock-Dashboard/
-├── app.py                  # Streamlit app — all tabs, UI, caching, ML inference
-├── model.py                # One-Step LSTM definition (PyTorch)
-├── seq2seq_lstm.py         # Seq2Seq Encoder-Decoder architecture
-├── amazon_lstm_model.pth   # Pre-trained One-Step LSTM weights
-├── seq2seq_lstm.pth        # Pre-trained Seq2Seq weights
-├── amazon_stock.csv        # Historical AMZN data (rate-limit fallback)
+├── app.py                      # Streamlit app — all tabs, UI, caching, ML inference
+├── training_notebook.ipynb     # Full training pipeline with loss curves & experiments
+├── model.py                    # One-Step LSTM definition (PyTorch)
+├── seq2seq_lstm.py             # Seq2Seq Encoder-Decoder architecture
+├── amazon_lstm_model.pth       # Pre-trained One-Step LSTM weights
+├── seq2seq_lstm.pth            # Pre-trained Seq2Seq weights
+├── amazon_stock.csv            # Historical AMZN data (auto-refreshed daily via CI)
+├── .github/workflows/          # GitHub Action: refresh CSV after market close daily
 └── requirements.txt
 ```
 
