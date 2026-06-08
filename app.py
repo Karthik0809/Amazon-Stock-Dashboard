@@ -1282,14 +1282,19 @@ with tab_risk:
     vol90 = df["Returns"].rolling(90).std() * np.sqrt(252) * 100
     vol_threshold = vol90.mean()
     fig_regime = go.Figure()
-    # colour background by regime
-    high_vol = vol30 > vol_threshold
-    for i in range(1, len(vol30)):
-        if high_vol.iloc[i]:
-            fig_regime.add_vrect(
-                x0=vol30.index[i-1], x1=vol30.index[i],
-                fillcolor="rgba(239,68,68,0.07)", line_width=0
-            )
+    # Batch consecutive high-vol periods into single vrect per period (fast)
+    high_vol = (vol30 > vol_threshold).fillna(False)
+    in_hv, hv_start = False, None
+    for i in range(len(high_vol)):
+        if high_vol.iloc[i] and not in_hv:
+            in_hv, hv_start = True, high_vol.index[i]
+        elif not high_vol.iloc[i] and in_hv:
+            in_hv = False
+            fig_regime.add_vrect(x0=hv_start, x1=high_vol.index[i],
+                                  fillcolor="rgba(239,68,68,0.07)", line_width=0)
+    if in_hv:
+        fig_regime.add_vrect(x0=hv_start, x1=high_vol.index[-1],
+                              fillcolor="rgba(239,68,68,0.07)", line_width=0)
     fig_regime.add_trace(go.Scatter(x=vol30.index, y=vol30, name="Vol 30D",
                                      line=dict(color="#ef4444", width=2)))
     fig_regime.add_trace(go.Scatter(x=vol90.index, y=vol90, name="Vol 90D",
@@ -1307,7 +1312,6 @@ with tab_risk:
 # TAB 4 — MARKET CONTEXT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_mkt:
-    st.info("🔍 Market Context: tab is executing. Loading content below...")
     # ── AMZN-only sections (instant, no network) ──────────────────────────────
     def _pr(s, days):
         s = s.dropna()
