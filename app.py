@@ -1307,22 +1307,25 @@ with tab_risk:
 # TAB 4 — MARKET CONTEXT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_mkt:
-    st.write("✅ Market Context tab is rendering")
     # ── AMZN-only sections (instant, no network) ──────────────────────────────
-    st.markdown(_sec("AMZN Return Metrics · Multi-Period"), unsafe_allow_html=True)
-
-    def period_return(s, days):
+    def _pr(s, days):
         s = s.dropna()
-        if len(s) < days: return np.nan
-        return (s.iloc[-1] / s.iloc[-days] - 1) * 100
+        if len(s) < days: return None
+        try:
+            v = (s.iloc[-1] / s.iloc[-days] - 1) * 100
+            return v if np.isfinite(v) else None
+        except Exception:
+            return None
 
     amzn_s = df["Close"]
+    st.markdown(_sec("AMZN Return Metrics · Multi-Period"), unsafe_allow_html=True)
     am1, am2, am3, am4, am5 = st.columns(5)
-    am1.metric("1W Return",  f"{period_return(amzn_s,5):+.2f}%")
-    am2.metric("1M Return",  f"{period_return(amzn_s,21):+.2f}%")
-    am3.metric("3M Return",  f"{period_return(amzn_s,63):+.2f}%")
-    am4.metric("6M Return",  f"{period_return(amzn_s,126):+.2f}%")
-    am5.metric("1Y Return",  f"{period_return(amzn_s,252):+.2f}%")
+    def _fmt(v): return f"{v:+.2f}%" if v is not None else "N/A"
+    am1.metric("1W Return",  _fmt(_pr(amzn_s, 5)))
+    am2.metric("1M Return",  _fmt(_pr(amzn_s, 21)))
+    am3.metric("3M Return",  _fmt(_pr(amzn_s, 63)))
+    am4.metric("6M Return",  _fmt(_pr(amzn_s, 126)))
+    am5.metric("1Y Return",  _fmt(_pr(amzn_s, 252)))
 
     st.markdown(_sec("AMZN Price · Full History"), unsafe_allow_html=True)
     fig_amzn = go.Figure()
@@ -1333,18 +1336,23 @@ with tab_mkt:
     st.plotly_chart(fig_amzn, width='stretch')
 
     st.markdown(_sec("Monthly Returns Heatmap", "amber"), unsafe_allow_html=True)
-    monthly = df["Close"].resample("ME").last().pct_change().dropna() * 100
-    monthly_df = pd.DataFrame({
-        "Year":  monthly.index.year,
-        "Month": monthly.index.month,
-        "Return": monthly.values,
-    })
-    pivot = monthly_df.pivot(index="Year", columns="Month", values="Return")
-    pivot.columns = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-    fig_heat = px.imshow(pivot, text_auto=".1f", color_continuous_scale="RdYlGn",
-                          zmin=-20, zmax=20, aspect="auto")
-    _c(fig_heat)
-    st.plotly_chart(fig_heat, width='stretch')
+    try:
+        monthly = df["Close"].resample("ME").last().pct_change().dropna() * 100
+        monthly_raw = pd.DataFrame({
+            "Year":  monthly.index.year,
+            "Month": monthly.index.month,
+            "Return": monthly.values,
+        })
+        _month_map = {1:"Jan",2:"Feb",3:"Mar",4:"Apr",5:"May",6:"Jun",
+                      7:"Jul",8:"Aug",9:"Sep",10:"Oct",11:"Nov",12:"Dec"}
+        pivot = monthly_raw.pivot_table(index="Year", columns="Month", values="Return", aggfunc="mean")
+        pivot.columns = [_month_map.get(m, str(m)) for m in pivot.columns]
+        fig_heat = px.imshow(pivot, text_auto=".1f", color_continuous_scale="RdYlGn",
+                              zmin=-20, zmax=20, aspect="auto")
+        _c(fig_heat)
+        st.plotly_chart(fig_heat, width='stretch')
+    except Exception as _he:
+        st.warning(f"Monthly heatmap unavailable: {_he}")
 
     # ── Peer Comparison (lazy — user clicks to load) ──────────────────────────
     st.markdown(_sec("Peer Comparison · MSFT GOOGL META AAPL SPY", "teal"), unsafe_allow_html=True)
@@ -1448,7 +1456,7 @@ with tab_mkt:
 # TAB 5 — WALK-FORWARD VALIDATION + XGBOOST
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_wf:
-    st.write("✅ Walk-Forward tab is rendering")
+    import traceback as _tb_wf
     st.markdown(_sec("Walk-Forward Validation · Rolling 252-Day Train / 21-Day Step", "teal"), unsafe_allow_html=True)
     st.caption("Realistic simulation of live deployment — model refitted on each expanding window, never sees future data.")
 
@@ -1556,18 +1564,22 @@ with tab_wf:
                 ), unsafe_allow_html=True)
 
         except Exception as _wf_err:
-            import traceback
             st.error(f"Walk-Forward error: {_wf_err}")
-            st.code(traceback.format_exc())
+            st.code(_tb_wf.format_exc())
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 6 — SIGNALS & ANOMALIES
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_sig:
-    st.write("✅ Signals tab is rendering")
+    import traceback as _tb_sig
     # ── Signal Scorecard ──────────────────────────────────────────────────────
+    try:
+        sigs = signal_scorecard(df)
+    except Exception as _sg_e:
+        st.error(f"Signal scorecard error: {_sg_e}")
+        st.code(_tb_sig.format_exc())
+        sigs = []
     st.markdown(_sec("Technical Signal Scorecard · All Indicators"), unsafe_allow_html=True)
-    sigs = signal_scorecard(df)
     bull_count = sum(1 for _, _, _, d in sigs if d == "bull")
     bear_count = sum(1 for _, _, _, d in sigs if d == "bear")
     warn_count = sum(1 for _, _, _, d in sigs if d == "warn")
@@ -1795,7 +1807,7 @@ with tab_sig:
 # TAB 7 — NEWS & SENTIMENT (FinBERT)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_news:
-    st.write("✅ News tab is rendering")
+    import traceback as _tb_news
     st.markdown(_sec("News Sentiment · FinBERT · Financial Domain NLP", "teal"), unsafe_allow_html=True)
     st.caption("ProsusAI/FinBERT — BERT fine-tuned on 10,000+ financial news articles. Far more accurate than general-purpose NLP for financial text.")
 
