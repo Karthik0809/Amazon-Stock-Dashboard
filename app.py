@@ -1819,92 +1819,107 @@ with tab_sig:
 # TAB 7 — NEWS & SENTIMENT (FinBERT)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_news:
-    import traceback as _tb_news
     st.markdown(_sec("News Sentiment · FinBERT · Financial Domain NLP", "teal"), unsafe_allow_html=True)
-    st.caption("ProsusAI/FinBERT — BERT fine-tuned on 10,000+ financial news articles. Far more accurate than general-purpose NLP for financial text.")
+    st.caption("ProsusAI/FinBERT — BERT fine-tuned on 10,000+ financial news articles.")
 
     if not news:
         st.info("No recent AMZN news articles found.")
     else:
-        with st.spinner("Running FinBERT inference on headlines…"):
-            try:
-                finbert_pipe = load_finbert()
-                fb_results   = finbert_sentiment(finbert_pipe, [e.title for e in news[:15]])
-                fb_labels    = [r[0] for r in fb_results]
-                fb_scores    = [r[1] for r in fb_results]
-                model_name   = "FinBERT"
-            except Exception:
-                # Graceful fallback if transformers unavailable
-                from textblob import TextBlob
-                fb_labels = []
-                fb_scores = []
-                for e in news[:15]:
-                    p = TextBlob(e.title).sentiment.polarity
-                    fb_scores.append(p)
-                    fb_labels.append("positive" if p > 0.05 else "negative" if p < -0.05 else "neutral")
-                model_name = "TextBlob (fallback)"
+        # ── Show headlines immediately (no model needed) ──────────────────────
+        st.markdown(f"**{len(news[:15])} recent headlines** — click below to score with FinBERT.")
+        for entry in news[:15]:
+            st.markdown(f"- **[{entry.title}]({entry.link})** · {entry.get('published', '')}")
 
-        pos_count  = fb_labels.count("positive")
-        neg_count  = fb_labels.count("negative")
-        neu_count  = fb_labels.count("neutral")
-        avg_pol    = np.mean(fb_scores)
-        overall_lb = "Positive" if avg_pol > 0.05 else "Negative" if avg_pol < -0.05 else "Neutral"
-        sent_color = "#10b981" if avg_pol > 0.05 else "#ef4444" if avg_pol < -0.05 else "#f59e0b"
-
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Model", model_name)
-        m2.metric("Articles", len(news[:15]))
-        m3.metric("🟢 Positive", pos_count)
-        m4.metric("🔴 Negative", neg_count)
-        m5.metric("Overall", overall_lb)
-
-        sv = "bull" if avg_pol > 0.05 else "bear" if avg_pol < -0.05 else ""
-        st.markdown(_sig(
-            f"<strong>{model_name}</strong> classifies <strong>{pos_count} positive</strong>, "
-            f"<strong>{neg_count} negative</strong>, <strong>{neu_count} neutral</strong> headlines. "
-            f"Aggregate sentiment: <strong style='color:{sent_color}'>{overall_lb}</strong> (mean polarity {avg_pol:+.3f}).",
-            sv
-        ), unsafe_allow_html=True)
-
-        # Sentiment distribution donut
-        dc, bc = st.columns([1, 2])
-        with dc:
-            fig_pie = go.Figure(go.Pie(
-                labels=["Positive", "Negative", "Neutral"],
-                values=[pos_count, neg_count, neu_count],
-                hole=0.6,
-                marker=dict(colors=["#10b981", "#ef4444", "#f59e0b"]),
-                textfont=dict(family="Space Mono, monospace", size=10, color="#d8e3f5"),
-            ))
-            fig_pie.update_traces(hovertemplate="%{label}: %{value} articles")
-            _c(fig_pie, height=220)
-            fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig_pie, width='stretch')
-
-        with bc:
-            titles_short = [e.title[:60] + "…" if len(e.title) > 60 else e.title for e in news[:10]]
-            fig_sent = go.Figure(go.Bar(
-                x=fb_scores[:10], y=titles_short, orientation="h",
-                marker_color=["#10b981" if s > 0.05 else "#ef4444" if s < -0.05 else "#f59e0b"
-                               for s in fb_scores[:10]],
-            ))
-            fig_sent.add_vline(x=0, line_dash="dash", line_color="#7b8ab8")
-            _c(fig_sent, height=330)
-            fig_sent.update_layout(xaxis_title="FinBERT Polarity Score")
-            st.plotly_chart(fig_sent, width='stretch')
-
-        filt = st.selectbox("Filter articles", ["All", "Positive", "Neutral", "Negative"])
         st.markdown("---")
-        for entry, label, score in zip(news[:15], fb_labels, fb_scores):
-            if filt == "Positive" and label != "positive": continue
-            if filt == "Negative" and label != "negative": continue
-            if filt == "Neutral"  and label != "neutral":  continue
-            badge = "🟢 Positive" if label == "positive" else "🔴 Negative" if label == "negative" else "🟡 Neutral"
-            col_badge = "#10b981" if label == "positive" else "#ef4444" if label == "negative" else "#f59e0b"
-            st.markdown(f"**[{entry.title}]({entry.link})**")
-            st.caption(f"<span style='color:{col_badge}'>{badge}</span>  ·  FinBERT score: {score:+.4f}  ·  {entry.get('published', '')}", unsafe_allow_html=True)
-            st.markdown(f"{entry.get('summary', '')[:220]}…")
+
+        # ── FinBERT behind button ─────────────────────────────────────────────
+        if st.button("▶ Run FinBERT Sentiment Analysis", key="run_finbert_btn"):
+            st.session_state["finbert_done"] = False
+            with st.spinner("Loading FinBERT model (~400 MB, one-time download)…"):
+                try:
+                    finbert_pipe = load_finbert()
+                    fb_results   = finbert_sentiment(finbert_pipe, [e.title for e in news[:15]])
+                    fb_labels    = [r[0] for r in fb_results]
+                    fb_scores    = [r[1] for r in fb_results]
+                    model_name   = "FinBERT"
+                except Exception:
+                    from textblob import TextBlob
+                    fb_labels, fb_scores = [], []
+                    for e in news[:15]:
+                        p = TextBlob(e.title).sentiment.polarity
+                        fb_scores.append(p)
+                        fb_labels.append("positive" if p > 0.05 else "negative" if p < -0.05 else "neutral")
+                    model_name = "TextBlob (fallback)"
+            st.session_state["finbert_labels"] = fb_labels
+            st.session_state["finbert_scores"] = fb_scores
+            st.session_state["finbert_model"]  = model_name
+            st.session_state["finbert_done"]   = True
+
+        if st.session_state.get("finbert_done"):
+            fb_labels  = st.session_state["finbert_labels"]
+            fb_scores  = st.session_state["finbert_scores"]
+            model_name = st.session_state["finbert_model"]
+
+            pos_count  = fb_labels.count("positive")
+            neg_count  = fb_labels.count("negative")
+            neu_count  = fb_labels.count("neutral")
+            avg_pol    = np.mean(fb_scores)
+            overall_lb = "Positive" if avg_pol > 0.05 else "Negative" if avg_pol < -0.05 else "Neutral"
+            sent_color = "#10b981" if avg_pol > 0.05 else "#ef4444" if avg_pol < -0.05 else "#f59e0b"
+
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Model", model_name)
+            m2.metric("Articles", len(news[:15]))
+            m3.metric("🟢 Positive", pos_count)
+            m4.metric("🔴 Negative", neg_count)
+            m5.metric("Overall", overall_lb)
+
+            sv = "bull" if avg_pol > 0.05 else "bear" if avg_pol < -0.05 else ""
+            st.markdown(_sig(
+                f"<strong>{model_name}</strong> classifies <strong>{pos_count} positive</strong>, "
+                f"<strong>{neg_count} negative</strong>, <strong>{neu_count} neutral</strong> headlines. "
+                f"Aggregate sentiment: <strong style='color:{sent_color}'>{overall_lb}</strong> (mean polarity {avg_pol:+.3f}).",
+                sv
+            ), unsafe_allow_html=True)
+
+            dc, bc = st.columns([1, 2])
+            with dc:
+                fig_pie = go.Figure(go.Pie(
+                    labels=["Positive", "Negative", "Neutral"],
+                    values=[pos_count, neg_count, neu_count],
+                    hole=0.6,
+                    marker=dict(colors=["#10b981", "#ef4444", "#f59e0b"]),
+                    textfont=dict(family="Space Mono, monospace", size=10, color="#d8e3f5"),
+                ))
+                fig_pie.update_traces(hovertemplate="%{label}: %{value} articles")
+                _c(fig_pie, height=220)
+                fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_pie, width='stretch')
+
+            with bc:
+                titles_short = [e.title[:60] + "…" if len(e.title) > 60 else e.title for e in news[:10]]
+                fig_sent = go.Figure(go.Bar(
+                    x=fb_scores[:10], y=titles_short, orientation="h",
+                    marker_color=["#10b981" if s > 0.05 else "#ef4444" if s < -0.05 else "#f59e0b"
+                                   for s in fb_scores[:10]],
+                ))
+                fig_sent.add_vline(x=0, line_dash="dash", line_color="#7b8ab8")
+                _c(fig_sent, height=330)
+                fig_sent.update_layout(xaxis_title="FinBERT Polarity Score")
+                st.plotly_chart(fig_sent, width='stretch')
+
+            filt = st.selectbox("Filter articles", ["All", "Positive", "Neutral", "Negative"])
             st.markdown("---")
+            for entry, label, score in zip(news[:15], fb_labels, fb_scores):
+                if filt == "Positive" and label != "positive": continue
+                if filt == "Negative" and label != "negative": continue
+                if filt == "Neutral"  and label != "neutral":  continue
+                badge     = "🟢 Positive" if label == "positive" else "🔴 Negative" if label == "negative" else "🟡 Neutral"
+                col_badge = "#10b981" if label == "positive" else "#ef4444" if label == "negative" else "#f59e0b"
+                st.markdown(f"**[{entry.title}]({entry.link})**")
+                st.caption(f"<span style='color:{col_badge}'>{badge}</span>  ·  score: {score:+.4f}  ·  {entry.get('published', '')}", unsafe_allow_html=True)
+                st.markdown(f"{entry.get('summary', '')[:220]}…")
+                st.markdown("---")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 7 — ABOUT
