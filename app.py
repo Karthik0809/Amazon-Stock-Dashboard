@@ -1715,41 +1715,40 @@ with tab_sig:
 
     # ── Portfolio Simulator ───────────────────────────────────────────────────
     try:
-      st.markdown(_sec("Portfolio Simulator · P&L Calculator", "blue"), unsafe_allow_html=True)
-      st.caption("Estimate unrealised P&L and project value using model forecasts.")
-      ps1, ps2, ps3 = st.columns(3)
-      with ps1:
-          shares   = st.number_input("Shares held", min_value=0.0, value=10.0, step=1.0)
-      with ps2:
-          avg_cost = st.number_input("Avg cost basis ($/share)", min_value=0.0, value=float(f"{cur_price:.2f}"), step=1.0)
-      with ps3:
-          fc_horizon = st.slider("Forecast horizon (days)", 1, 30, 7, key="ps_horizon")
+        st.markdown(_sec("Portfolio Simulator · P&L Calculator", "blue"), unsafe_allow_html=True)
+        st.caption("Estimate unrealised P&L and project value using model forecasts.")
+        ps1, ps2, ps3 = st.columns(3)
+        with ps1:
+            shares   = st.number_input("Shares held", min_value=0.0, value=10.0, step=1.0)
+        with ps2:
+            avg_cost = st.number_input("Avg cost basis ($/share)", min_value=0.0, value=float(f"{cur_price:.2f}"), step=1.0)
+        with ps3:
+            fc_horizon = st.slider("Forecast horizon (days)", 1, 30, 7, key="ps_horizon")
 
-      current_val = shares * cur_price
-      cost_basis  = shares * avg_cost
-      unrealised  = current_val - cost_basis
-      unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else 0
+        current_val    = shares * cur_price
+        cost_basis     = shares * avg_cost
+        unrealised     = current_val - cost_basis
+        unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else 0
 
-      # Quick LR forecast for the simulator
-      mu_ps, _, _ = forecast_lr(df, fc_horizon)
-      proj_price  = mu_ps.iloc[-1]
-    proj_val    = shares * proj_price
-    proj_pnl    = proj_val - cost_basis
-    proj_pnl_pct = (proj_pnl / cost_basis * 100) if cost_basis > 0 else 0
+        mu_ps, _, _  = forecast_lr(df, fc_horizon)
+        proj_price   = mu_ps.iloc[-1]
+        proj_val     = shares * proj_price
+        proj_pnl     = proj_val - cost_basis
+        proj_pnl_pct = (proj_pnl / cost_basis * 100) if cost_basis > 0 else 0
 
-    pa, pb, pc, pd_ = st.columns(4)
-    pa.metric("Current Value",      f"${current_val:,.2f}")
-    pb.metric("Unrealised P&L",     f"${unrealised:+,.2f}", f"{unrealised_pct:+.1f}%")
-    pc.metric(f"Projected Price ({fc_horizon}d)", f"${proj_price:.2f}")
-    pd_.metric("Projected P&L",     f"${proj_pnl:+,.2f}", f"{proj_pnl_pct:+.1f}%")
+        pa, pb, pc, pd_ = st.columns(4)
+        pa.metric("Current Value",                f"${current_val:,.2f}")
+        pb.metric("Unrealised P&L",               f"${unrealised:+,.2f}", f"{unrealised_pct:+.1f}%")
+        pc.metric(f"Projected Price ({fc_horizon}d)", f"${proj_price:.2f}")
+        pd_.metric("Projected P&L",               f"${proj_pnl:+,.2f}", f"{proj_pnl_pct:+.1f}%")
 
-      pnl_var = "bull" if unrealised >= 0 else "bear"
-      st.markdown(_sig(
-          f"Holding <strong>{shares:g} shares</strong> at avg cost <strong>${avg_cost:.2f}</strong> — "
-          f"current unrealised P&amp;L: <strong>${unrealised:+,.2f}</strong> ({unrealised_pct:+.1f}%). "
-          f"LR model projects <strong>${proj_price:.2f}</strong> in {fc_horizon} days → projected P&amp;L: <strong>${proj_pnl:+,.2f}</strong>.",
-          pnl_var
-      ), unsafe_allow_html=True)
+        pnl_var = "bull" if unrealised >= 0 else "bear"
+        st.markdown(_sig(
+            f"Holding <strong>{shares:g} shares</strong> at avg cost <strong>${avg_cost:.2f}</strong> — "
+            f"current unrealised P&amp;L: <strong>${unrealised:+,.2f}</strong> ({unrealised_pct:+.1f}%). "
+            f"LR model projects <strong>${proj_price:.2f}</strong> in {fc_horizon} days → projected P&amp;L: <strong>${proj_pnl:+,.2f}</strong>.",
+            pnl_var
+        ), unsafe_allow_html=True)
     except Exception as _ps_err:
         st.warning(f"Portfolio simulator unavailable: {_ps_err}")
 
