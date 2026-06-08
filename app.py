@@ -1402,8 +1402,8 @@ with tab_mkt:
                 for t in peers_df.columns:
                     s = peers_df[t]
                     ret_rows.append({"Ticker": t,
-                        "1M (%)": period_return(s,21), "3M (%)": period_return(s,63),
-                        "6M (%)": period_return(s,126), "1Y (%)": period_return(s,252),
+                        "1M (%)": _pr(s,21), "3M (%)": _pr(s,63),
+                        "6M (%)": _pr(s,126), "1Y (%)": _pr(s,252),
                         "Vol (%)": s.pct_change().dropna().std()*np.sqrt(252)*100})
                 ret_df = pd.DataFrame(ret_rows).set_index("Ticker")
                 def color_returns(v):
@@ -1714,24 +1714,25 @@ with tab_sig:
         st.markdown(_sig(f"<strong>{len(anom_df)}</strong> anomalous sessions detected over the full history — {len(up_anom)} positive, {len(down_anom)} negative.", "warn"), unsafe_allow_html=True)
 
     # ── Portfolio Simulator ───────────────────────────────────────────────────
-    st.markdown(_sec("Portfolio Simulator · P&L Calculator", "blue"), unsafe_allow_html=True)
-    st.caption("Estimate unrealised P&L and project value using model forecasts.")
-    ps1, ps2, ps3 = st.columns(3)
-    with ps1:
-        shares   = st.number_input("Shares held", min_value=0.0, value=10.0, step=1.0)
-    with ps2:
-        avg_cost = st.number_input("Avg cost basis ($/share)", min_value=0.0, value=float(f"{cur_price:.2f}"), step=1.0)
-    with ps3:
-        fc_horizon = st.slider("Forecast horizon (days)", 1, 30, 7, key="ps_horizon")
+    try:
+      st.markdown(_sec("Portfolio Simulator · P&L Calculator", "blue"), unsafe_allow_html=True)
+      st.caption("Estimate unrealised P&L and project value using model forecasts.")
+      ps1, ps2, ps3 = st.columns(3)
+      with ps1:
+          shares   = st.number_input("Shares held", min_value=0.0, value=10.0, step=1.0)
+      with ps2:
+          avg_cost = st.number_input("Avg cost basis ($/share)", min_value=0.0, value=float(f"{cur_price:.2f}"), step=1.0)
+      with ps3:
+          fc_horizon = st.slider("Forecast horizon (days)", 1, 30, 7, key="ps_horizon")
 
-    current_val = shares * cur_price
-    cost_basis  = shares * avg_cost
-    unrealised  = current_val - cost_basis
-    unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else 0
+      current_val = shares * cur_price
+      cost_basis  = shares * avg_cost
+      unrealised  = current_val - cost_basis
+      unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else 0
 
-    # Quick LR forecast for the simulator
-    mu_ps, _, _ = forecast_lr(df, fc_horizon)
-    proj_price  = mu_ps.iloc[-1]
+      # Quick LR forecast for the simulator
+      mu_ps, _, _ = forecast_lr(df, fc_horizon)
+      proj_price  = mu_ps.iloc[-1]
     proj_val    = shares * proj_price
     proj_pnl    = proj_val - cost_basis
     proj_pnl_pct = (proj_pnl / cost_basis * 100) if cost_basis > 0 else 0
@@ -1742,20 +1743,22 @@ with tab_sig:
     pc.metric(f"Projected Price ({fc_horizon}d)", f"${proj_price:.2f}")
     pd_.metric("Projected P&L",     f"${proj_pnl:+,.2f}", f"{proj_pnl_pct:+.1f}%")
 
-    pnl_var = "bull" if unrealised >= 0 else "bear"
-    st.markdown(_sig(
-        f"Holding <strong>{shares:g} shares</strong> at avg cost <strong>${avg_cost:.2f}</strong> — "
-        f"current unrealised P&amp;L: <strong>${unrealised:+,.2f}</strong> ({unrealised_pct:+.1f}%). "
-        f"LR model projects <strong>${proj_price:.2f}</strong> in {fc_horizon} days → projected P&amp;L: <strong>${proj_pnl:+,.2f}</strong>.",
-        pnl_var
-    ), unsafe_allow_html=True)
+      pnl_var = "bull" if unrealised >= 0 else "bear"
+      st.markdown(_sig(
+          f"Holding <strong>{shares:g} shares</strong> at avg cost <strong>${avg_cost:.2f}</strong> — "
+          f"current unrealised P&amp;L: <strong>${unrealised:+,.2f}</strong> ({unrealised_pct:+.1f}%). "
+          f"LR model projects <strong>${proj_price:.2f}</strong> in {fc_horizon} days → projected P&amp;L: <strong>${proj_pnl:+,.2f}</strong>.",
+          pnl_var
+      ), unsafe_allow_html=True)
+    except Exception as _ps_err:
+        st.warning(f"Portfolio simulator unavailable: {_ps_err}")
 
     # ── Options Greeks (Black-Scholes) ────────────────────────────────────────
     st.markdown(_sec("Options Pricing · Black-Scholes Model & Greeks", "amber"), unsafe_allow_html=True)
     st.caption("European option pricing with all five Greeks — Delta, Gamma, Theta, Vega, Rho.")
     og1, og2, og3, og4, og5 = st.columns(5)
     S_bs   = df["Close"].iloc[-1]
-    K_bs   = og1.number_input("Strike (K)", value=round(S_bs), step=5.0)
+    K_bs   = og1.number_input("Strike (K)", value=float(round(S_bs)), step=5.0)
     T_bs   = og2.number_input("Days to Expiry", value=30, min_value=1, max_value=365) / 365
     r_bs   = og3.number_input("Risk-Free Rate (%)", value=5.0, step=0.25) / 100
     sig_bs = og4.number_input("IV / Vol (%)", value=float(f"{df['Volatility'].iloc[-1]:.1f}"), step=1.0) / 100
