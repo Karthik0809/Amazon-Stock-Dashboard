@@ -1307,6 +1307,7 @@ with tab_risk:
 # TAB 4 — MARKET CONTEXT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_mkt:
+    st.info("🔍 Market Context: tab is executing. Loading content below...")
     # ── AMZN-only sections (instant, no network) ──────────────────────────────
     def _pr(s, days):
         s = s.dropna()
