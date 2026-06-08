@@ -1307,181 +1307,141 @@ with tab_risk:
 # TAB 4 — MARKET CONTEXT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_mkt:
-    try:
-        with st.spinner("Loading peer data…"):
+    # ── AMZN-only sections (instant, no network) ──────────────────────────────
+    st.markdown(_sec("AMZN Return Metrics · Multi-Period"), unsafe_allow_html=True)
+
+    def period_return(s, days):
+        s = s.dropna()
+        if len(s) < days: return np.nan
+        return (s.iloc[-1] / s.iloc[-days] - 1) * 100
+
+    amzn_s = df["Close"]
+    am1, am2, am3, am4, am5 = st.columns(5)
+    am1.metric("1W Return",  f"{period_return(amzn_s,5):+.2f}%")
+    am2.metric("1M Return",  f"{period_return(amzn_s,21):+.2f}%")
+    am3.metric("3M Return",  f"{period_return(amzn_s,63):+.2f}%")
+    am4.metric("6M Return",  f"{period_return(amzn_s,126):+.2f}%")
+    am5.metric("1Y Return",  f"{period_return(amzn_s,252):+.2f}%")
+
+    st.markdown(_sec("AMZN Price · Full History"), unsafe_allow_html=True)
+    fig_amzn = go.Figure()
+    fig_amzn.add_trace(go.Scatter(x=amzn_s.index, y=amzn_s,
+                                   line=dict(color="#5c6bc0", width=1.5), name="AMZN Close"))
+    _c(fig_amzn)
+    fig_amzn.update_layout(yaxis_title="Price (USD)")
+    st.plotly_chart(fig_amzn, use_container_width=True)
+
+    st.markdown(_sec("Monthly Returns Heatmap", "amber"), unsafe_allow_html=True)
+    monthly = df["Close"].resample("ME").last().pct_change().dropna() * 100
+    monthly_df = pd.DataFrame({
+        "Year":  monthly.index.year,
+        "Month": monthly.index.month,
+        "Return": monthly.values,
+    })
+    pivot = monthly_df.pivot(index="Year", columns="Month", values="Return")
+    pivot.columns = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    fig_heat = px.imshow(pivot, text_auto=".1f", color_continuous_scale="RdYlGn",
+                          zmin=-20, zmax=20, aspect="auto")
+    _c(fig_heat)
+    st.plotly_chart(fig_heat, use_container_width=True)
+
+    # ── Peer Comparison (lazy — user clicks to load) ──────────────────────────
+    st.markdown(_sec("Peer Comparison · MSFT GOOGL META AAPL SPY", "teal"), unsafe_allow_html=True)
+    st.markdown(_sig("Peer data requires live yfinance fetch. Click below to load — may take 10–20 seconds.", "warn"), unsafe_allow_html=True)
+
+    if st.button("▶ Load Peer Comparison", key="load_peers_btn"):
+        with st.spinner("Fetching peer data from yfinance…"):
             peers_raw = load_peers()
 
-        # AMZN is always available from the main df — use it directly
-        amzn_series = df["Close"].copy()
-        amzn_series.name = "AMZN"
-
         if peers_raw.empty:
-            # Only AMZN available
-            peers_df = amzn_series.to_frame()
-            st.markdown(_sig("yfinance rate-limited — peer tickers unavailable. Showing AMZN data only. Refresh in a few minutes.", "warn"), unsafe_allow_html=True)
+            st.markdown(_sig("yfinance rate-limited — try again in a few minutes.", "bear"), unsafe_allow_html=True)
         else:
-            # Align AMZN with peers on their common date range
-            peers_df = peers_raw.copy()
-            # Reindex AMZN to peer index (inner join dates)
-            common_idx = peers_df.index.intersection(amzn_series.index)
+            # Align AMZN from main df
+            common_idx = peers_raw.index.intersection(df.index)
             if len(common_idx) > 10:
-                peers_df = peers_df.loc[common_idx].copy()
-                peers_df["AMZN"] = amzn_series.loc[common_idx]
+                peers_df = peers_raw.loc[common_idx].copy()
+                peers_df["AMZN"] = df["Close"].loc[common_idx]
             else:
-                # No overlap — just use AMZN standalone
-                peers_df = amzn_series.to_frame()
+                peers_df = peers_raw.copy()
+            peers_df = peers_df.ffill().dropna(how="any")
 
-        # Forward-fill any remaining gaps, drop all-NaN rows
-        peers_df = peers_df.ffill().dropna(how="all")
+            if not peers_df.empty:
+                norm_peers = peers_df.div(peers_df.iloc[0]) * 100
+                colors_p = ["#5c6bc0", "#26a69a", "#ffb300", "#ef5350", "#ab47bc", "#78909c"]
+                fig_peers = go.Figure()
+                for i, col in enumerate(norm_peers.columns):
+                    w = 2.5 if col == "AMZN" else 1.5
+                    fig_peers.add_trace(go.Scatter(x=norm_peers.index, y=norm_peers[col],
+                                                    name=col, line=dict(color=colors_p[i % len(colors_p)], width=w)))
+                fig_peers.add_hline(y=100, line_dash="dash", line_color="#7b8ab8")
+                _c(fig_peers, legend_h=True)
+                fig_peers.update_layout(yaxis_title="Indexed Price (Base = 100)")
+                st.plotly_chart(fig_peers, use_container_width=True)
 
-        # Trim to common start (first row where every column is valid)
-        any_valid = peers_df.dropna(how="any")
-        if not any_valid.empty:
-            peers_df = peers_df.loc[any_valid.index[0]:]
+                # Returns table
+                ret_rows = []
+                for t in peers_df.columns:
+                    s = peers_df[t]
+                    ret_rows.append({"Ticker": t,
+                        "1M (%)": period_return(s,21), "3M (%)": period_return(s,63),
+                        "6M (%)": period_return(s,126), "1Y (%)": period_return(s,252),
+                        "Vol (%)": s.pct_change().dropna().std()*np.sqrt(252)*100})
+                ret_df = pd.DataFrame(ret_rows).set_index("Ticker")
+                def color_returns(v):
+                    if pd.isna(v): return ""
+                    return "color:#10b981" if v >= 0 else "color:#ef4444"
+                st.dataframe(ret_df.style.format("{:.1f}").map(color_returns,
+                    subset=["1M (%)","3M (%)","6M (%)","1Y (%)"]), use_container_width=True)
 
-        if True:  # always render
-        st.markdown(_sec("Relative Performance · Normalised to 100"), unsafe_allow_html=True)
-        # Divide by first row (now guaranteed non-NaN)
-        norm_peers = peers_df.div(peers_df.iloc[0]) * 100
-        fig_peers = go.Figure()
-        colors_p = ["#5c6bc0", "#26a69a", "#ffb300", "#ef5350", "#ab47bc", "#78909c"]
-        for i, col in enumerate(norm_peers.columns):
-            width = 3 if col == "AMZN" else 1.5
-            fig_peers.add_trace(go.Scatter(x=norm_peers.index, y=norm_peers[col],
-                                            name=col, line=dict(color=colors_p[i % len(colors_p)], width=width)))
-        fig_peers.add_hline(y=100, line_dash="dash", line_color="#7b8ab8")
-        _c(fig_peers, legend_h=True)
-        fig_peers.update_layout(yaxis_title="Indexed Price (Base = 100)")
-        st.plotly_chart(fig_peers, use_container_width=True)
+                # Correlation
+                if len(peers_df.columns) > 1:
+                    st.markdown(_sec("Correlation Matrix", "blue"), unsafe_allow_html=True)
+                    fig_corr = px.imshow(peers_df.pct_change().dropna().corr(),
+                                          text_auto=".2f", color_continuous_scale="RdBu_r",
+                                          zmin=-1, zmax=1, aspect="auto")
+                    _c(fig_corr)
+                    st.plotly_chart(fig_corr, use_container_width=True)
 
-        st.markdown(_sec("Return Comparison · Multi-Period", "amber"), unsafe_allow_html=True)
-        def period_return(s, days):
-            s = s.dropna()
-            if len(s) < days: return np.nan
-            return (s.iloc[-1] / s.iloc[-days] - 1) * 100
+                # Beta
+                if "SPY" in peers_df.columns:
+                    st.markdown(_sec("Beta vs SPY", "red"), unsafe_allow_html=True)
+                    spy_r = peers_df["SPY"].pct_change().dropna()
+                    beta_rows = []
+                    for t in [c for c in peers_df.columns if c != "SPY"]:
+                        sr = peers_df[t].pct_change().dropna()
+                        ci = sr.index.intersection(spy_r.index)
+                        cov = np.cov(sr[ci], spy_r[ci])[0,1]
+                        var = spy_r[ci].var()
+                        beta_rows.append({"Ticker": t, "Beta": cov/var if var>0 else np.nan})
+                    bdf = pd.DataFrame(beta_rows)
+                    fig_b = go.Figure(go.Bar(x=bdf["Ticker"], y=bdf["Beta"],
+                                              marker_color=["#10b981" if b<1 else "#ef4444" for b in bdf["Beta"]]))
+                    fig_b.add_hline(y=1, line_dash="dash", line_color="#f59e0b")
+                    _c(fig_b)
+                    st.plotly_chart(fig_b, use_container_width=True)
 
-        ret_rows = []
-        for t in peers_df.columns:
-            s = peers_df[t]
-            ret_rows.append({
-                "Ticker": t,
-                "1M (%)":  period_return(s, 21),
-                "3M (%)":  period_return(s, 63),
-                "6M (%)":  period_return(s, 126),
-                "1Y (%)":  period_return(s, 252),
-                "Volatility (%)": s.pct_change().dropna().std() * np.sqrt(252) * 100,
-            })
-        ret_df = pd.DataFrame(ret_rows).set_index("Ticker")
-
-        def color_returns(val):
-            if pd.isna(val): return ""
-            return "color: #26a69a" if val >= 0 else "color: #ef5350"
-
-        st.dataframe(
-            ret_df.style
-                .format("{:.1f}", subset=["1M (%)", "3M (%)", "6M (%)", "1Y (%)", "Volatility (%)"])
-                .map(color_returns, subset=["1M (%)", "3M (%)", "6M (%)", "1Y (%)"]),
-            use_container_width=True
-        )
-
-        if len(peers_df.columns) > 1:
-            st.markdown(_sec("Correlation Matrix · Daily Returns"), unsafe_allow_html=True)
-            ret_corr = peers_df.pct_change().dropna().corr()
-            fig_corr = px.imshow(
-                ret_corr, text_auto=".2f", color_continuous_scale="RdBu_r",
-                zmin=-1, zmax=1, aspect="auto",
-            )
-            _c(fig_corr)
-            st.plotly_chart(fig_corr, use_container_width=True)
-
-        st.markdown(_sec("Beta vs S&P 500 · SPY"), unsafe_allow_html=True)
-        if "SPY" in peers_df.columns:
-            spy_rets  = peers_df["SPY"].pct_change().dropna()
-            beta_rows = []
-            for t in [c for c in peers_df.columns if c != "SPY"]:
-                stk_rets = peers_df[t].pct_change().dropna()
-                common   = stk_rets.index.intersection(spy_rets.index)
-                cov  = np.cov(stk_rets[common], spy_rets[common])[0, 1]
-                var  = spy_rets[common].var()
-                beta = cov / var if var > 0 else np.nan
-                beta_rows.append({"Ticker": t, "Beta": beta})
-            beta_df = pd.DataFrame(beta_rows)
-            fig_beta = go.Figure(go.Bar(
-                x=beta_df["Ticker"], y=beta_df["Beta"],
-                marker_color=["#26a69a" if b < 1 else "#ef5350" for b in beta_df["Beta"]],
-            ))
-            fig_beta.add_hline(y=1, line_dash="dash", line_color="#ffb300", annotation_text="Market Beta = 1")
-            _c(fig_beta)
-            fig_beta.update_layout(yaxis_title="Beta")
-            st.plotly_chart(fig_beta, use_container_width=True)
-            amzn_beta = beta_df.loc[beta_df["Ticker"] == "AMZN", "Beta"].values
-            if len(amzn_beta) > 0:
-                b = amzn_beta[0]
-                bv = "bull" if b < 1 else "bear"
-                direction = "more" if b > 1 else "less"
-                st.markdown(_sig(f"AMZN Beta = <strong>{b:.2f}</strong> — {direction} volatile than the S&P 500. A 1% market move → ~{b:.2f}% AMZN move historically.", bv), unsafe_allow_html=True)
-
-        if "SPY" in peers_df.columns:
-            st.markdown(_sec("Rolling 60-Day Correlation · AMZN vs SPY"), unsafe_allow_html=True)
-            roll_corr = peers_df["AMZN"].pct_change().rolling(60).corr(peers_df["SPY"].pct_change())
-            fig_rc = go.Figure()
-            fig_rc.add_trace(go.Scatter(x=roll_corr.index, y=roll_corr,
-                                         fill="tozeroy", fillcolor="rgba(92,107,192,0.15)",
-                                         line=dict(color="#5c6bc0", width=2), name="Rolling Corr"))
-            _c(fig_rc)
-            fig_rc.update_layout(yaxis_title="Correlation", yaxis=dict(range=[-1, 1]))
-            st.plotly_chart(fig_rc, use_container_width=True)
-
-        # ── Cointegration & Pair Trading ──────────────────────────────────────
-        st.markdown(_sec("Cointegration & Pair Trading · Engle-Granger Test", "purple"), unsafe_allow_html=True)
-        st.caption("Tests whether AMZN and each peer share a long-run equilibrium. A stationary spread enables mean-reversion pair trading.")
-        with st.spinner("Running cointegration tests…"):
-            try:
-                coint_results = run_cointegration(peers_df)
-            except Exception as e:
-                coint_results = []
-                st.markdown(_sig(f"Cointegration test unavailable: {str(e)[:80]}", "warn"), unsafe_allow_html=True)
-
-        if coint_results:
-            coint_display = [{k: v for k, v in r.items() if not k.startswith("_")}
-                              for r in coint_results]
-            coint_df = pd.DataFrame(coint_display)
-            st.dataframe(
-                coint_df.style.map(
-                    lambda v: "color:#10b981;font-weight:700" if v == "✅ YES" else
-                              ("color:#ef4444" if v == "❌ NO" else ""),
-                    subset=["Cointegrated"]
-                ),
-                use_container_width=True, hide_index=True
-            )
-
-            # Plot spread for the most cointegrated pair
-            best = min(coint_results, key=lambda x: x["Coint p-val"])
-            spread = best["_spread"]
-            z_spread = (spread - spread.mean()) / spread.std()
-            fig_sp = go.Figure()
-            fig_sp.add_trace(go.Scatter(x=z_spread.index, y=z_spread,
-                                         line=dict(color="#5c6bc0", width=1.5), name=f"Spread Z-Score (AMZN/{best['_ticker']})"))
-            fig_sp.add_hline(y=2,  line_dash="dash", line_color="#ef4444", annotation_text="+2σ Entry Short")
-            fig_sp.add_hline(y=-2, line_dash="dash", line_color="#10b981", annotation_text="-2σ Entry Long")
-            fig_sp.add_hline(y=0,  line_dash="dot",  line_color="#7d93b8")
-            fig_sp.add_hrect(y0=-2, y1=2, fillcolor="rgba(59,130,246,0.04)", line_width=0)
-            _c(fig_sp)
-            fig_sp.update_layout(yaxis_title="Z-Score of Spread")
-            st.plotly_chart(fig_sp, use_container_width=True)
-
-            coint_flag = best["Coint p-val"] < 0.05
-            cv = "bull" if coint_flag else "warn"
-            st.markdown(_sig(
-                f"Best pair: <strong>AMZN/{best['_ticker']}</strong> — Cointegration p-value: <strong>{best['Coint p-val']:.4f}</strong>, "
-                f"Hedge ratio: <strong>{best['Hedge Ratio']}</strong>, Spread half-life: <strong>{best['Half-Life']}</strong>. "
-                f"{'Statistically cointegrated — spread is mean-reverting, enabling pair trade signals.' if coint_flag else 'Not cointegrated at 5% — no reliable long-run equilibrium.'}", cv
-            ), unsafe_allow_html=True)
-
-    except Exception as _mkt_err:
-        import traceback
-        st.error(f"Market Context error: {_mkt_err}")
-        st.code(traceback.format_exc())
+                # Cointegration
+                st.markdown(_sec("Cointegration & Pair Trading · Engle-Granger", "purple"), unsafe_allow_html=True)
+                try:
+                    coint_results = run_cointegration(peers_df)
+                    if coint_results:
+                        coint_display = [{k:v for k,v in r.items() if not k.startswith("_")} for r in coint_results]
+                        st.dataframe(pd.DataFrame(coint_display), use_container_width=True, hide_index=True)
+                        best = min(coint_results, key=lambda x: x["Coint p-val"])
+                        spread = best["_spread"]
+                        z_spread = (spread - spread.mean()) / spread.std()
+                        fig_sp = go.Figure()
+                        fig_sp.add_trace(go.Scatter(x=z_spread.index, y=z_spread,
+                                                     line=dict(color="#5c6bc0", width=1.5),
+                                                     name=f"Spread Z (AMZN/{best['_ticker']})"))
+                        fig_sp.add_hline(y=2,  line_dash="dash", line_color="#ef4444", annotation_text="+2σ")
+                        fig_sp.add_hline(y=-2, line_dash="dash", line_color="#10b981", annotation_text="-2σ")
+                        fig_sp.add_hline(y=0,  line_dash="dot",  line_color="#7d93b8")
+                        _c(fig_sp)
+                        fig_sp.update_layout(yaxis_title="Z-Score")
+                        st.plotly_chart(fig_sp, use_container_width=True)
+                except Exception as ce:
+                    st.markdown(_sig(f"Cointegration unavailable: {str(ce)[:100]}", "warn"), unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 5 — WALK-FORWARD VALIDATION + XGBOOST
@@ -1490,96 +1450,113 @@ with tab_wf:
     st.markdown(_sec("Walk-Forward Validation · Rolling 252-Day Train / 21-Day Step", "teal"), unsafe_allow_html=True)
     st.caption("Realistic simulation of live deployment — model refitted on each expanding window, never sees future data.")
 
-    with st.spinner("Running walk-forward validation (LR + XGBoost)…"):
-        wf_dates, wf_actual, wf_lr, wf_xgb = walk_forward_validation(df)
-
-    if len(wf_dates) > 0:
-        wf1, wf2, wf3, wf4 = st.columns(4)
-        wf1.metric("LR RMSE ($)",   f"{np.sqrt(mean_squared_error(wf_actual, wf_lr)):.2f}")
-        wf2.metric("XGB RMSE ($)",  f"{np.sqrt(mean_squared_error(wf_actual, wf_xgb)):.2f}")
-        wf3.metric("LR MAPE (%)",   f"{mape(wf_actual, wf_lr):.2f}")
-        wf4.metric("XGB MAPE (%)",  f"{mape(wf_actual, wf_xgb):.2f}")
-
-        fig_wf = go.Figure()
-        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_actual, name="Actual",
-                                     line=dict(color="#d8e3f5", width=2)))
-        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_lr, name="LR (Walk-Fwd)",
-                                     line=dict(color="#f59e0b", width=1.5, dash="dot")))
-        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_xgb, name="XGBoost (Walk-Fwd)",
-                                     line=dict(color="#10b981", width=1.5, dash="dot")))
-        _c(fig_wf, legend_h=True)
-        fig_wf.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-        st.plotly_chart(fig_wf, use_container_width=True)
-
-        # Rolling RMSE by window
-        st.markdown(_sec("Rolling Window RMSE · 63-Day Rolling Error", "amber"), unsafe_allow_html=True)
-        wf_df_tmp = pd.DataFrame({"actual": wf_actual, "lr": wf_lr, "xgb": wf_xgb}, index=pd.to_datetime(wf_dates))
-        wf_df_tmp["lr_err2"]  = (wf_df_tmp["actual"] - wf_df_tmp["lr"])**2
-        wf_df_tmp["xgb_err2"] = (wf_df_tmp["actual"] - wf_df_tmp["xgb"])**2
-        roll_rmse_lr  = wf_df_tmp["lr_err2"].rolling(63).mean().apply(np.sqrt)
-        roll_rmse_xgb = wf_df_tmp["xgb_err2"].rolling(63).mean().apply(np.sqrt)
-        fig_rrmse = go.Figure()
-        fig_rrmse.add_trace(go.Scatter(x=roll_rmse_lr.index,  y=roll_rmse_lr,
-                                        name="LR RMSE",  line=dict(color="#f59e0b", width=1.5)))
-        fig_rrmse.add_trace(go.Scatter(x=roll_rmse_xgb.index, y=roll_rmse_xgb,
-                                        name="XGB RMSE", line=dict(color="#10b981", width=1.5)))
-        _c(fig_rrmse, legend_h=True)
-        fig_rrmse.update_layout(yaxis_title="RMSE ($)")
-        st.plotly_chart(fig_rrmse, use_container_width=True)
-
-        better = "XGBoost" if mape(wf_actual, wf_xgb) < mape(wf_actual, wf_lr) else "Linear Regression"
-        st.markdown(_sig(
-            f"<strong>{better}</strong> achieves lower MAPE across all walk-forward windows. "
-            f"Walk-forward validation is more rigorous than a single train-test split — it simulates "
-            f"how a model would perform in live production with periodic retraining.", "bull"
-        ), unsafe_allow_html=True)
-
-    # ── XGBoost with RandomizedSearchCV ──────────────────────────────────────
-    st.markdown(_sec("XGBoost · RandomizedSearchCV Hyperparameter Tuning", "blue"), unsafe_allow_html=True)
-    st.caption("30 iterations · 5-fold CV · optimised for RMSE · 11 features including technical indicators")
-
-    with st.spinner("Training XGBoost with RandomizedSearchCV (30 iters × 5 folds)…"):
-        xgb_model, best_params, xgb_rmse, xgb_mape, xgb_r2, xgb_fi, xgb_idx, xgb_actual, xgb_pred = train_xgboost(df)
-
-    x1, x2, x3 = st.columns(3)
-    x1.metric("XGBoost RMSE ($)", f"{xgb_rmse:.2f}")
-    x2.metric("XGBoost MAPE (%)", f"{xgb_mape:.2f}")
-    x3.metric("XGBoost R²",       f"{xgb_r2:.4f}")
-
-    # Best hyperparameters
-    params_html = "".join([
-        f'<tr><td style="padding:6px 14px;font-family:\'Space Mono\',monospace;font-size:0.7rem;color:#7d93b8;border-bottom:1px solid #192540">{k}</td>'
-        f'<td style="padding:6px 14px;font-family:\'Space Mono\',monospace;font-size:0.7rem;color:#d8e3f5;border-bottom:1px solid #192540;text-align:right">{v}</td></tr>'
-        for k, v in best_params.items()
-    ])
-    st.markdown(f"""
-    <div style="margin:12px 0">
-      <div style="font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Best Hyperparameters Found</div>
-      <table style="width:50%;border-collapse:collapse;background:#0d1220;border:1px solid #192540;border-radius:3px">
-        <tbody>{params_html}</tbody>
-      </table>
+    st.markdown("""
+    <div style="background:#0d1220;border:1px solid #192540;border-radius:4px;padding:16px 20px;margin:8px 0 16px">
+      <div style="font-family:'Space Mono',monospace;font-size:0.65rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Methodology</div>
+      <ul style="font-family:'Space Mono',monospace;font-size:0.72rem;color:#7d93b8;line-height:1.9;margin:0;padding-left:1.2em">
+        <li>Training window: <strong style="color:#d8e3f5">252 trading days</strong> (1 year) expanding with each step</li>
+        <li>Step size: <strong style="color:#d8e3f5">21 days</strong> — model retrained monthly on fresh data</li>
+        <li>Models compared: <strong style="color:#d8e3f5">Linear Regression</strong> vs <strong style="color:#10b981">XGBoost</strong></li>
+        <li>Metric: RMSE and MAPE on out-of-sample (test) windows only</li>
+        <li>No data leakage — each prediction uses only past data available at that point in time</li>
+      </ul>
     </div>""", unsafe_allow_html=True)
 
-    # Test predictions chart
-    fig_xgb = go.Figure()
-    fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_actual, name="Actual",
-                                  line=dict(color="#d8e3f5", width=2)))
-    fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_pred,   name="XGBoost",
-                                  line=dict(color="#10b981", width=1.5, dash="dot")))
-    _c(fig_xgb, legend_h=True)
-    fig_xgb.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-    st.plotly_chart(fig_xgb, use_container_width=True)
+    # ── XGBoost with RandomizedSearchCV (lazy) ───────────────────────────────
+    st.markdown(_sec("XGBoost · RandomizedSearchCV Hyperparameter Tuning", "blue"), unsafe_allow_html=True)
+    st.caption("30 iterations · 5-fold CV · optimised for RMSE · 11 features including technical indicators")
+    st.markdown(_sig("Training runs RandomizedSearchCV (30 iter × 5 fold). Click below to train — takes ~30–60 seconds.", "warn"), unsafe_allow_html=True)
 
-    # Feature importance
-    st.markdown(_sec("XGBoost Feature Importance", "teal"), unsafe_allow_html=True)
-    fig_xfi = go.Figure(go.Bar(
-        x=xgb_fi.values, y=xgb_fi.index, orientation="h",
-        marker_color=px.colors.sequential.Viridis[:len(xgb_fi)],
-    ))
-    _c(fig_xfi, height=360)
-    fig_xfi.update_layout(xaxis_title="Importance (Gain)")
-    st.plotly_chart(fig_xfi, use_container_width=True)
-    st.markdown(_sig(f"<strong>{xgb_fi.index[-1]}</strong> is the highest-gain feature in the tuned XGBoost model. RandomizedSearchCV explored {30 * 5} model configurations to find the optimal hyperparameter set.", "bull"), unsafe_allow_html=True)
+    if st.button("▶ Train XGBoost + Walk-Forward", key="run_wf_btn"):
+        try:
+            with st.spinner("Training XGBoost with RandomizedSearchCV (30 iters × 5 folds)…"):
+                xgb_model, best_params, xgb_rmse, xgb_mape, xgb_r2, xgb_fi, xgb_idx, xgb_actual, xgb_pred = train_xgboost(df)
+
+            x1, x2, x3 = st.columns(3)
+            x1.metric("XGBoost RMSE ($)", f"{xgb_rmse:.2f}")
+            x2.metric("XGBoost MAPE (%)", f"{xgb_mape:.2f}")
+            x3.metric("XGBoost R²",       f"{xgb_r2:.4f}")
+
+            # Best hyperparameters
+            params_html = "".join([
+                f'<tr><td style="padding:6px 14px;font-family:\'Space Mono\',monospace;font-size:0.7rem;color:#7d93b8;border-bottom:1px solid #192540">{k}</td>'
+                f'<td style="padding:6px 14px;font-family:\'Space Mono\',monospace;font-size:0.7rem;color:#d8e3f5;border-bottom:1px solid #192540;text-align:right">{v}</td></tr>'
+                for k, v in best_params.items()
+            ])
+            st.markdown(f"""
+            <div style="margin:12px 0">
+              <div style="font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Best Hyperparameters Found</div>
+              <table style="width:50%;border-collapse:collapse;background:#0d1220;border:1px solid #192540;border-radius:3px">
+                <tbody>{params_html}</tbody>
+              </table>
+            </div>""", unsafe_allow_html=True)
+
+            fig_xgb = go.Figure()
+            fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_actual, name="Actual",
+                                          line=dict(color="#d8e3f5", width=2)))
+            fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_pred,   name="XGBoost",
+                                          line=dict(color="#10b981", width=1.5, dash="dot")))
+            _c(fig_xgb, legend_h=True)
+            fig_xgb.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
+            st.plotly_chart(fig_xgb, use_container_width=True)
+
+            st.markdown(_sec("XGBoost Feature Importance", "teal"), unsafe_allow_html=True)
+            fig_xfi = go.Figure(go.Bar(
+                x=xgb_fi.values, y=xgb_fi.index, orientation="h",
+                marker_color=px.colors.sequential.Viridis[:len(xgb_fi)],
+            ))
+            _c(fig_xfi, height=360)
+            fig_xfi.update_layout(xaxis_title="Importance (Gain)")
+            st.plotly_chart(fig_xfi, use_container_width=True)
+
+            # Walk-forward validation
+            st.markdown(_sec("Walk-Forward Validation · LR vs XGBoost", "amber"), unsafe_allow_html=True)
+            with st.spinner("Running rolling walk-forward validation…"):
+                wf_dates, wf_actual, wf_lr, wf_xgb = walk_forward_validation(df)
+
+            if len(wf_dates) > 0:
+                wf1, wf2, wf3, wf4 = st.columns(4)
+                wf1.metric("LR RMSE ($)",  f"{np.sqrt(mean_squared_error(wf_actual, wf_lr)):.2f}")
+                wf2.metric("XGB RMSE ($)", f"{np.sqrt(mean_squared_error(wf_actual, wf_xgb)):.2f}")
+                wf3.metric("LR MAPE (%)",  f"{mape(wf_actual, wf_lr):.2f}")
+                wf4.metric("XGB MAPE (%)", f"{mape(wf_actual, wf_xgb):.2f}")
+
+                fig_wf = go.Figure()
+                fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_actual, name="Actual",
+                                             line=dict(color="#d8e3f5", width=2)))
+                fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_lr, name="LR (Walk-Fwd)",
+                                             line=dict(color="#f59e0b", width=1.5, dash="dot")))
+                fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_xgb, name="XGBoost (Walk-Fwd)",
+                                             line=dict(color="#10b981", width=1.5, dash="dot")))
+                _c(fig_wf, legend_h=True)
+                fig_wf.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
+                st.plotly_chart(fig_wf, use_container_width=True)
+
+                wf_df_tmp = pd.DataFrame({"actual": wf_actual, "lr": wf_lr, "xgb": wf_xgb},
+                                          index=pd.to_datetime(wf_dates))
+                wf_df_tmp["lr_err2"]  = (wf_df_tmp["actual"] - wf_df_tmp["lr"])**2
+                wf_df_tmp["xgb_err2"] = (wf_df_tmp["actual"] - wf_df_tmp["xgb"])**2
+                roll_rmse_lr  = wf_df_tmp["lr_err2"].rolling(63).mean().apply(np.sqrt)
+                roll_rmse_xgb = wf_df_tmp["xgb_err2"].rolling(63).mean().apply(np.sqrt)
+                fig_rrmse = go.Figure()
+                fig_rrmse.add_trace(go.Scatter(x=roll_rmse_lr.index, y=roll_rmse_lr,
+                                                name="LR RMSE",  line=dict(color="#f59e0b", width=1.5)))
+                fig_rrmse.add_trace(go.Scatter(x=roll_rmse_xgb.index, y=roll_rmse_xgb,
+                                                name="XGB RMSE", line=dict(color="#10b981", width=1.5)))
+                _c(fig_rrmse, legend_h=True)
+                fig_rrmse.update_layout(yaxis_title="RMSE ($)")
+                st.plotly_chart(fig_rrmse, use_container_width=True)
+
+                better = "XGBoost" if mape(wf_actual, wf_xgb) < mape(wf_actual, wf_lr) else "Linear Regression"
+                st.markdown(_sig(
+                    f"<strong>{better}</strong> achieves lower MAPE across walk-forward windows. "
+                    f"Walk-forward is more rigorous than a single train-test split — it simulates live retraining.", "bull"
+                ), unsafe_allow_html=True)
+
+        except Exception as _wf_err:
+            import traceback
+            st.error(f"Walk-Forward error: {_wf_err}")
+            st.code(traceback.format_exc())
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 6 — SIGNALS & ANOMALIES
