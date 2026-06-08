@@ -1195,9 +1195,9 @@ st.markdown(f"""
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_fc, tab_tech, tab_risk, tab_mkt, tab_wf, tab_sig, tab_news, tab_about = st.tabs([
-    "🔮 Forecast", "📉 Technical Analysis", "📊 Risk Analytics",
-    "🌐 Market Context", "🔁 Walk-Forward Validation", "📡 Signals & Anomalies",
-    "📰 News & Sentiment", "ℹ️ About"
+    "Forecast", "Technical Analysis", "Risk Analytics",
+    "Market Context", "Walk-Forward Validation", "Signals & Anomalies",
+    "News & Sentiment", "About"
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
