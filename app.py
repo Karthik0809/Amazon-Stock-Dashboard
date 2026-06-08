@@ -17,6 +17,7 @@ from xgboost import XGBRegressor
 from scipy import stats
 from scipy.stats import norm as sp_norm
 from statsmodels.tsa.stattools import coint, adfuller
+import statsmodels.api as sm
 from seq2seq_lstm import Seq2SeqLSTM, make_multi_sequences
 
 SEQ_LEN = 30
@@ -870,9 +871,7 @@ def run_cointegration(peers_df, base="AMZN"):
             continue
         score, pval, _ = coint(base_s[common], peer_s[common])
         # Calculate spread and half-life
-        from statsmodels.regression.linear_model import OLS
-        import statsmodels.api as sm
-        ols = OLS(base_s[common].values, sm.add_constant(peer_s[common].values)).fit()
+        ols = sm.OLS(base_s[common].values, sm.add_constant(peer_s[common].values)).fit()
         hedge = ols.params[1]
         spread = base_s[common] - hedge * peer_s[common]
         # Spread ADF test
@@ -881,7 +880,7 @@ def run_cointegration(peers_df, base="AMZN"):
         lag_spread = spread.shift(1).dropna()
         delta      = spread.diff().dropna()
         common_idx = lag_spread.index.intersection(delta.index)
-        ar_ols     = OLS(delta[common_idx].values, sm.add_constant(lag_spread[common_idx].values)).fit()
+        ar_ols     = sm.OLS(delta[common_idx].values, sm.add_constant(lag_spread[common_idx].values)).fit()
         half_life  = max(1, int(-np.log(2) / ar_ols.params[1])) if ar_ols.params[1] < 0 else None
         results.append({
             "Pair":       f"AMZN/{ticker}",
@@ -1328,15 +1327,25 @@ with tab_mkt:
         peers_df = load_peers()
 
     if peers_df.empty:
-        # Absolute fallback — build from the main df we already have
         peers_df = pd.DataFrame({"AMZN": df["Close"]})
 
-    if len(peers_df.columns) < 2:
-        st.markdown(_sig("yfinance rate-limited — only AMZN data available. Peer comparison charts will show AMZN only. Refresh in a few minutes to load all peers.", "warn"), unsafe_allow_html=True)
+    # Always ensure AMZN is present using main df (most up-to-date)
+    peers_df["AMZN"] = df["Close"].reindex(peers_df.index, method="ffill")
 
-    if True:  # always render
+    # Drop rows where every column is NaN, then forward-fill remaining gaps
+    peers_df = peers_df.dropna(how="all").ffill()
+
+    # Find the first row where ALL columns have data (common start)
+    first_valid = peers_df.dropna(how="any").index[0] if not peers_df.dropna(how="any").empty else peers_df.index[0]
+    peers_df = peers_df.loc[first_valid:]
+
+    if len(peers_df.columns) < 2:
+        st.markdown(_sig("yfinance rate-limited — only AMZN data available. Peer comparison shows AMZN only. Refresh in a few minutes to load all peers.", "warn"), unsafe_allow_html=True)
+
+    if True:  # always render — never shows blank tab
         st.markdown(_sec("Relative Performance · Normalised to 100"), unsafe_allow_html=True)
-        norm_peers = peers_df / peers_df.iloc[0] * 100
+        # Divide by first row (now guaranteed non-NaN)
+        norm_peers = peers_df.div(peers_df.iloc[0]) * 100
         fig_peers = go.Figure()
         colors_p = ["#5c6bc0", "#26a69a", "#ffb300", "#ef5350", "#ab47bc", "#78909c"]
         for i, col in enumerate(norm_peers.columns):
@@ -1378,14 +1387,15 @@ with tab_mkt:
             use_container_width=True
         )
 
-        st.markdown(_sec("Correlation Matrix · Daily Returns"), unsafe_allow_html=True)
-        ret_corr = peers_df.pct_change().dropna().corr()
-        fig_corr = px.imshow(
-            ret_corr, text_auto=".2f", color_continuous_scale="RdBu_r",
-            zmin=-1, zmax=1, aspect="auto",
-        )
-        _c(fig_corr)
-        st.plotly_chart(fig_corr, use_container_width=True)
+        if len(peers_df.columns) > 1:
+            st.markdown(_sec("Correlation Matrix · Daily Returns"), unsafe_allow_html=True)
+            ret_corr = peers_df.pct_change().dropna().corr()
+            fig_corr = px.imshow(
+                ret_corr, text_auto=".2f", color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1, aspect="auto",
+            )
+            _c(fig_corr)
+            st.plotly_chart(fig_corr, use_container_width=True)
 
         st.markdown(_sec("Beta vs S&P 500 · SPY"), unsafe_allow_html=True)
         if "SPY" in peers_df.columns:
@@ -1429,7 +1439,11 @@ with tab_mkt:
         st.markdown(_sec("Cointegration & Pair Trading · Engle-Granger Test", "purple"), unsafe_allow_html=True)
         st.caption("Tests whether AMZN and each peer share a long-run equilibrium. A stationary spread enables mean-reversion pair trading.")
         with st.spinner("Running cointegration tests…"):
-            coint_results = run_cointegration(peers_df)
+            try:
+                coint_results = run_cointegration(peers_df)
+            except Exception as e:
+                coint_results = []
+                st.markdown(_sig(f"Cointegration test unavailable: {str(e)[:80]}", "warn"), unsafe_allow_html=True)
 
         if coint_results:
             coint_display = [{k: v for k, v in r.items() if not k.startswith("_")}
