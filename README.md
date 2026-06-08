@@ -3,7 +3,7 @@
 > A production-grade, ML-powered stock analytics dashboard for **Amazon (AMZN)** — built with PyTorch, Streamlit, and quantitative finance techniques used in real trading desks.
 
 <p align="center">
-  <a href="YOUR_STREAMLIT_URL_HERE">
+  <a href="https://amazonstock-dashboard.streamlit.app/">
     <img src="https://static.streamlit.io/badges/streamlit_badge_black_white.svg" alt="Open in Streamlit" />
   </a>
   &nbsp;
@@ -18,9 +18,7 @@
 
 ## 🔗 Live App
 
-**[▸ Launch Dashboard](YOUR_STREAMLIT_URL_HERE)**
-
-> Once deployed on Streamlit Cloud, replace both `YOUR_STREAMLIT_URL_HERE` placeholders above with your app's URL.
+**[▸ Launch Dashboard](https://amazonstock-dashboard.streamlit.app/)**
 
 ---
 
@@ -39,6 +37,9 @@ Designed to be **resume-worthy for a Data Scientist / Quantitative Analyst role*
 | **Simulation** | Monte Carlo GBM — 500 paths, P10/P50/P90 percentile fan |
 | **Feature Engineering** | RSI, MACD, Bollinger Bands, EMA, ATR, volume signals |
 | **NLP** | News sentiment analysis via TextBlob + Yahoo RSS feed |
+| **Anomaly Detection** | Z-score rolling window flagging of unusual price events |
+| **Signal Engineering** | 7-indicator scorecard, pivot points, volatility regime detection |
+| **Portfolio Analytics** | P&L simulator, position sizing, projected value at forecast horizon |
 | **Data Visualisation** | Plotly interactive charts, custom dark terminal theme |
 
 ---
@@ -60,6 +61,8 @@ Designed to be **resume-worthy for a Data Scientist / Quantitative Analyst role*
 - Full scorecard: Sharpe, Sortino, Max Drawdown, Calmar, VaR 95%, CVaR
 - Return distribution with Shapiro-Wilk normality test, skewness & kurtosis
 - ACF plot (Efficient Market Hypothesis test)
+- **Rolling 30-Day VaR** — shows how tail risk evolves over time
+- **Volatility Regime Detection** — 30D vs 90D rolling vol with regime shading (high/low vol periods)
 - Random Forest feature importance (200 trees, mean decrease in impurity)
 
 ### 🌐 Market Context Tab
@@ -70,6 +73,12 @@ Designed to be **resume-worthy for a Data Scientist / Quantitative Analyst role*
 ### 🤖 Model Performance Tab
 - RMSE and MAPE across all three models with visual bar comparison
 - Actual vs Predicted overlay — strict train/test shading, no data leakage
+
+### 📡 Signals & Anomalies Tab *(new)*
+- **Signal Scorecard** — consolidated bull/bear verdict across 7 indicators (RSI, MACD, Bollinger Bands, MA crossover, Price vs MA90, Volume, Volatility)
+- **Support & Resistance** — classic floor-trader pivot points (PP, R1/R2/R3, S1/S2/S3) plotted on last 60 days of price
+- **Anomaly Detection** — Z-score on 20-day rolling window flags statistically unusual price moves (±2.5σ), plotted as triangles on price chart with a sortable event table
+- **Portfolio P&L Simulator** — enter shares held + avg cost basis, see unrealised P&L and projected value at any forecast horizon
 
 ### 📰 News & Sentiment Tab
 - Live Yahoo Finance RSS feed filtered for AMZN headlines

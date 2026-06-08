@@ -618,6 +618,97 @@ def backtest_rsi(df):
     rets = df["Close"].pct_change().shift(-1)
     return (1 + (sig * rets).fillna(0)).cumprod()
 
+def pivot_points(df):
+    """Classic floor-trader pivot points from last full session."""
+    h, l, c = df["High"].iloc[-1], df["Low"].iloc[-1], df["Close"].iloc[-1]
+    pp = (h + l + c) / 3
+    return dict(
+        PP=pp,
+        R1=2*pp - l, R2=pp + (h - l), R3=h + 2*(pp - l),
+        S1=2*pp - h, S2=pp - (h - l), S3=l - 2*(h - pp),
+    )
+
+def detect_anomalies(df, window=20, z_thresh=2.5):
+    """Flag days where price return is > z_thresh standard deviations."""
+    r = df["Close"].pct_change()
+    mu = r.rolling(window).mean()
+    sd = r.rolling(window).std()
+    z  = (r - mu) / (sd + 1e-9)
+    anom = df[z.abs() > z_thresh].copy()
+    anom["z_score"] = z[z.abs() > z_thresh]
+    return anom
+
+def signal_scorecard(df):
+    """Return a list of (indicator, signal, value, direction) tuples."""
+    latest = df.iloc[-1]
+    prev   = df.iloc[-2]
+    signals = []
+
+    # RSI
+    rsi = latest["RSI"]
+    if rsi > 70:
+        signals.append(("RSI (14)", "OVERBOUGHT", f"{rsi:.1f}", "bear"))
+    elif rsi < 30:
+        signals.append(("RSI (14)", "OVERSOLD", f"{rsi:.1f}", "bull"))
+    else:
+        signals.append(("RSI (14)", "NEUTRAL", f"{rsi:.1f}", ""))
+
+    # MACD crossover
+    if latest["MACD"] > latest["MACD_Signal"] and prev["MACD"] <= prev["MACD_Signal"]:
+        signals.append(("MACD", "BULLISH CROSS", f"{latest['MACD']:.3f}", "bull"))
+    elif latest["MACD"] < latest["MACD_Signal"] and prev["MACD"] >= prev["MACD_Signal"]:
+        signals.append(("MACD", "BEARISH CROSS", f"{latest['MACD']:.3f}", "bear"))
+    elif latest["MACD"] > latest["MACD_Signal"]:
+        signals.append(("MACD", "ABOVE SIGNAL", f"{latest['MACD']:.3f}", "bull"))
+    else:
+        signals.append(("MACD", "BELOW SIGNAL", f"{latest['MACD']:.3f}", "bear"))
+
+    # Bollinger Bands
+    close = latest["Close"]
+    if close > latest["BB_upper"]:
+        signals.append(("Bollinger Bands", "ABOVE UPPER", f"${close:.2f}", "bear"))
+    elif close < latest["BB_lower"]:
+        signals.append(("Bollinger Bands", "BELOW LOWER", f"${close:.2f}", "bull"))
+    else:
+        pct = (close - latest["BB_lower"]) / (latest["BB_upper"] - latest["BB_lower"] + 1e-9)
+        signals.append(("Bollinger Bands", f"MID RANGE ({pct*100:.0f}%)", f"${close:.2f}", ""))
+
+    # MA crossover (7 vs 30)
+    if latest["MA7"] > latest["MA30"] and prev["MA7"] <= prev["MA30"]:
+        signals.append(("MA 7/30 Cross", "GOLDEN CROSS ▲", f"${latest['MA7']:.2f}", "bull"))
+    elif latest["MA7"] < latest["MA30"] and prev["MA7"] >= prev["MA30"]:
+        signals.append(("MA 7/30 Cross", "DEATH CROSS ▼", f"${latest['MA7']:.2f}", "bear"))
+    elif latest["MA7"] > latest["MA30"]:
+        signals.append(("MA 7/30 Cross", "MA7 > MA30", f"${latest['MA7']:.2f}", "bull"))
+    else:
+        signals.append(("MA 7/30 Cross", "MA7 < MA30", f"${latest['MA7']:.2f}", "bear"))
+
+    # Price vs MA90
+    if close > latest["MA90"]:
+        signals.append(("Price vs MA90", "ABOVE TREND", f"${close:.2f}", "bull"))
+    else:
+        signals.append(("Price vs MA90", "BELOW TREND", f"${close:.2f}", "bear"))
+
+    # Volume
+    vol_ratio = latest["Vol_ratio"]
+    if vol_ratio > 1.5:
+        signals.append(("Volume", "HIGH VOLUME", f"{vol_ratio:.2f}x avg", "warn"))
+    elif vol_ratio < 0.6:
+        signals.append(("Volume", "LOW VOLUME", f"{vol_ratio:.2f}x avg", ""))
+    else:
+        signals.append(("Volume", "NORMAL", f"{vol_ratio:.2f}x avg", ""))
+
+    # Volatility regime
+    vol = latest["Volatility"]
+    if vol > 40:
+        signals.append(("Volatility (30D Ann.)", "ELEVATED", f"{vol:.1f}%", "warn"))
+    elif vol < 20:
+        signals.append(("Volatility (30D Ann.)", "COMPRESSED", f"{vol:.1f}%", "bull"))
+    else:
+        signals.append(("Volatility (30D Ann.)", "NORMAL", f"{vol:.1f}%", ""))
+
+    return signals
+
 def mape(y_true, y_pred):
     mask = y_true != 0
     return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
@@ -723,9 +814,10 @@ card_html += "</div>"
 st.markdown(card_html, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_fc, tab_tech, tab_risk, tab_mkt, tab_models, tab_news, tab_about = st.tabs([
+tab_fc, tab_tech, tab_risk, tab_mkt, tab_models, tab_sig, tab_news, tab_about = st.tabs([
     "🔮 Forecast", "📉 Technical Analysis", "📊 Risk Analytics",
-    "🌐 Market Context", "🤖 Model Performance", "📰 News & Sentiment", "ℹ️ About"
+    "🌐 Market Context", "🤖 Model Performance", "📡 Signals & Anomalies",
+    "📰 News & Sentiment", "ℹ️ About"
 ])
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -814,15 +906,15 @@ with tab_fc:
         cc.metric("P95 (upside)",       f"${mc_p95:.2f}")
         cd.metric("P(price rises)",     f"{prob_up:.1f}%")
 
-    with st.expander("View forecast table"):
-        fdf = mu.reset_index()
-        fdf.columns = ["Date", "Forecast ($)"]
-        fdf["Date"] = pd.to_datetime(fdf["Date"]).dt.strftime("%Y-%m-%d")
-        if lo is not None:
-            fdf["Lower 95%"] = [f"${v:.2f}" for v in lo.values]
-            fdf["Upper 95%"] = [f"${v:.2f}" for v in hi.values]
-        fdf["Forecast ($)"] = fdf["Forecast ($)"].map("${:.2f}".format)
-        st.dataframe(fdf, use_container_width=True, hide_index=True)
+    st.markdown(_sec("Forecast Table", "teal"), unsafe_allow_html=True)
+    fdf = mu.reset_index()
+    fdf.columns = ["Date", "Forecast ($)"]
+    fdf["Date"] = pd.to_datetime(fdf["Date"]).dt.strftime("%Y-%m-%d")
+    if lo is not None:
+        fdf["Lower 95%"] = [f"${v:.2f}" for v in lo.values]
+        fdf["Upper 95%"] = [f"${v:.2f}" for v in hi.values]
+    fdf["Forecast ($)"] = fdf["Forecast ($)"].map("${:.2f}".format)
+    st.dataframe(fdf, use_container_width=True, hide_index=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — TECHNICAL ANALYSIS
@@ -1002,6 +1094,48 @@ with tab_risk:
           {'<span style="color:#ef4444">✗ Non-normal distribution detected — fat tails present</span>' if norm_flag else '<span style="color:#10b981">✓ Cannot reject normality (p > 0.05)</span>'}<br>
           {'<span style="color:#f59e0b">⚠ Positive excess kurtosis — extreme moves more likely than Gaussian</span>' if kurt_flag else ''}
         </div>""", unsafe_allow_html=True)
+
+    st.markdown(_sec("Rolling 30-Day VaR 95% · Value at Risk Over Time", "red"), unsafe_allow_html=True)
+    st.caption("Daily VaR 95% computed on rolling 30-day window — shows how tail risk evolves.")
+    roll_var = df["Returns"].rolling(30).quantile(0.05) * 100
+    fig_rvar = go.Figure()
+    fig_rvar.add_trace(go.Scatter(
+        x=roll_var.index, y=roll_var,
+        fill="tozeroy", fillcolor="rgba(239,68,68,0.12)",
+        line=dict(color="#ef4444", width=1.5), name="VaR 95%"
+    ))
+    fig_rvar.add_hline(y=roll_var.mean(), line_dash="dash", line_color="#f59e0b",
+                       annotation_text=f"Mean VaR {roll_var.mean():.2f}%")
+    _c(fig_rvar)
+    fig_rvar.update_layout(yaxis_title="VaR 95% (%)")
+    st.plotly_chart(fig_rvar, use_container_width=True)
+
+    st.markdown(_sec("Volatility Regime · 30D vs 90D Rolling Annualised Vol", "amber"), unsafe_allow_html=True)
+    st.caption("Regime detection via rolling volatility comparison — high-vol vs low-vol periods.")
+    vol30 = df["Returns"].rolling(30).std() * np.sqrt(252) * 100
+    vol90 = df["Returns"].rolling(90).std() * np.sqrt(252) * 100
+    vol_threshold = vol90.mean()
+    fig_regime = go.Figure()
+    # colour background by regime
+    high_vol = vol30 > vol_threshold
+    for i in range(1, len(vol30)):
+        if high_vol.iloc[i]:
+            fig_regime.add_vrect(
+                x0=vol30.index[i-1], x1=vol30.index[i],
+                fillcolor="rgba(239,68,68,0.07)", line_width=0
+            )
+    fig_regime.add_trace(go.Scatter(x=vol30.index, y=vol30, name="Vol 30D",
+                                     line=dict(color="#ef4444", width=2)))
+    fig_regime.add_trace(go.Scatter(x=vol90.index, y=vol90, name="Vol 90D",
+                                     line=dict(color="#f59e0b", width=1.5, dash="dot")))
+    fig_regime.add_hline(y=vol_threshold, line_dash="dash", line_color="#7d93b8",
+                          annotation_text="Regime Threshold")
+    _c(fig_regime, legend_h=True)
+    fig_regime.update_layout(yaxis_title="Annualised Volatility (%)")
+    st.plotly_chart(fig_regime, use_container_width=True)
+    curr_regime = "HIGH VOLATILITY" if vol30.iloc[-1] > vol_threshold else "LOW VOLATILITY"
+    rv = "warn" if curr_regime == "HIGH VOLATILITY" else "bull"
+    st.markdown(_sig(f"Current regime: <strong>{curr_regime}</strong> — 30D vol ({vol30.iloc[-1]:.1f}%) vs 90D baseline ({vol_threshold:.1f}%). Red shading = high-vol periods.", rv), unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 4 — MARKET CONTEXT
@@ -1239,7 +1373,175 @@ with tab_models:
     st.markdown(_sig(f"<strong>{top_feat}</strong> is the top predictive feature for next-day closing price per the Random Forest model.", "bull"), unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — NEWS & SENTIMENT
+# TAB 6 — SIGNALS & ANOMALIES
+# ═══════════════════════════════════════════════════════════════════════════════
+with tab_sig:
+
+    # ── Signal Scorecard ──────────────────────────────────────────────────────
+    st.markdown(_sec("Technical Signal Scorecard · All Indicators"), unsafe_allow_html=True)
+    sigs = signal_scorecard(df)
+    bull_count = sum(1 for _, _, _, d in sigs if d == "bull")
+    bear_count = sum(1 for _, _, _, d in sigs if d == "bear")
+    warn_count = sum(1 for _, _, _, d in sigs if d == "warn")
+    overall    = "BULLISH" if bull_count > bear_count else "BEARISH" if bear_count > bull_count else "MIXED"
+    ov_var     = "bull" if overall == "BULLISH" else "bear" if overall == "BEARISH" else "warn"
+
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("Bullish Signals", f"{bull_count} / {len(sigs)}")
+    sc2.metric("Bearish Signals", f"{bear_count} / {len(sigs)}")
+    sc3.metric("Caution Signals", f"{warn_count} / {len(sigs)}")
+    sc4.metric("Overall Bias",    overall)
+    st.markdown(_sig(
+        f"<strong>{bull_count} bullish</strong> vs <strong>{bear_count} bearish</strong> signals across 7 indicators — overall bias is <strong>{overall}</strong>.",
+        ov_var
+    ), unsafe_allow_html=True)
+
+    # Signal table
+    sig_color = {"bull": "#10b981", "bear": "#ef4444", "warn": "#f59e0b", "": "#7d93b8"}
+    sig_icon  = {"bull": "▲", "bear": "▼", "warn": "◆", "": "◉"}
+    rows_html = ""
+    for indicator, label, value, direction in sigs:
+        color = sig_color[direction]
+        icon  = sig_icon[direction]
+        rows_html += f"""
+        <tr>
+          <td style="padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.72rem;color:#7d93b8;border-bottom:1px solid #192540">{indicator}</td>
+          <td style="padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.72rem;border-bottom:1px solid #192540">
+            <span style="color:{color};font-weight:700">{icon} {label}</span>
+          </td>
+          <td style="padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.72rem;color:#d8e3f5;border-bottom:1px solid #192540;text-align:right">{value}</td>
+        </tr>"""
+    st.markdown(f"""
+    <table style="width:100%;border-collapse:collapse;background:#0d1220;border:1px solid #192540;border-radius:3px">
+      <thead>
+        <tr>
+          <th style="padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid #1e2e4e;text-align:left">Indicator</th>
+          <th style="padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid #1e2e4e;text-align:left">Signal</th>
+          <th style="padding:10px 14px;font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid #1e2e4e;text-align:right">Value</th>
+        </tr>
+      </thead>
+      <tbody>{rows_html}</tbody>
+    </table>""", unsafe_allow_html=True)
+
+    # ── Support & Resistance ──────────────────────────────────────────────────
+    st.markdown(_sec("Support & Resistance · Classic Pivot Points", "teal"), unsafe_allow_html=True)
+    st.caption("Floor-trader pivots computed from last full session's High / Low / Close.")
+    pvt = pivot_points(df)
+    cur_price = df["Close"].iloc[-1]
+
+    pv_cols = st.columns(7)
+    pv_labels = ["S3", "S2", "S1", "PP", "R1", "R2", "R3"]
+    pv_colors = ["#ef4444","#f87171","#fca5a5","#f59e0b","#6ee7b7","#34d399","#10b981"]
+    for i, lbl in enumerate(pv_labels):
+        val  = pvt[lbl]
+        dist = (val - cur_price) / cur_price * 100
+        pv_cols[i].markdown(f"""
+        <div style="text-align:center;background:#0d1220;border:1px solid #192540;border-radius:3px;padding:10px 4px">
+          <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:{pv_colors[i]};font-weight:700;letter-spacing:.1em;margin-bottom:5px">{lbl}</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.9rem;color:#d8e3f5;font-weight:700">${val:.2f}</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;margin-top:3px">{dist:+.1f}%</div>
+        </div>""", unsafe_allow_html=True)
+
+    # Pivot chart
+    recent = df["Close"].iloc[-60:]
+    fig_pvt = go.Figure()
+    fig_pvt.add_trace(go.Scatter(x=recent.index, y=recent, name="Close",
+                                  line=dict(color="#5c6bc0", width=2)))
+    pvt_style = {
+        "PP":  ("#f59e0b", "dash"), "R1": ("#6ee7b7","dot"), "R2": ("#34d399","dot"), "R3": ("#10b981","dot"),
+        "S1": ("#fca5a5","dot"), "S2": ("#f87171","dot"), "S3": ("#ef4444","dot"),
+    }
+    for name, (col, dash) in pvt_style.items():
+        fig_pvt.add_hline(y=pvt[name], line_color=col, line_dash=dash, line_width=1,
+                           annotation_text=f"{name} ${pvt[name]:.2f}",
+                           annotation_font_color=col, annotation_font_size=9)
+    _c(fig_pvt, height=340)
+    fig_pvt.update_layout(yaxis_title="Price (USD)", xaxis_title="Date")
+    st.plotly_chart(fig_pvt, use_container_width=True)
+
+    # nearest S/R signal
+    nearest_r = min([pvt["R1"], pvt["R2"], pvt["R3"]], key=lambda x: abs(x - cur_price))
+    nearest_s = max([pvt["S1"], pvt["S2"], pvt["S3"]], key=lambda x: abs(x - cur_price) if x < cur_price else 99999)
+    st.markdown(_sig(
+        f"Nearest resistance: <strong>${nearest_r:.2f}</strong> ({(nearest_r/cur_price-1)*100:+.1f}%)  ·  "
+        f"Nearest support: <strong>${nearest_s:.2f}</strong> ({(nearest_s/cur_price-1)*100:+.1f}%)",
+        "warn"
+    ), unsafe_allow_html=True)
+
+    # ── Anomaly Detection ─────────────────────────────────────────────────────
+    st.markdown(_sec("Anomaly Detection · Statistical Price Move Flagging", "amber"), unsafe_allow_html=True)
+    st.caption("Returns > 2.5 standard deviations from 20-day rolling mean are flagged as anomalous.")
+    anom_df = detect_anomalies(df, window=20, z_thresh=2.5)
+
+    fig_anom = go.Figure()
+    fig_anom.add_trace(go.Scatter(x=df["Close"].index, y=df["Close"],
+                                   name="Close", line=dict(color="#5c6bc0", width=1.5)))
+    if not anom_df.empty:
+        up_anom   = anom_df[anom_df["Returns"] > 0]
+        down_anom = anom_df[anom_df["Returns"] < 0]
+        fig_anom.add_trace(go.Scatter(
+            x=up_anom.index, y=up_anom["Close"], mode="markers",
+            marker=dict(color="#10b981", size=9, symbol="triangle-up"),
+            name=f"Positive Anomaly ({len(up_anom)})"
+        ))
+        fig_anom.add_trace(go.Scatter(
+            x=down_anom.index, y=down_anom["Close"], mode="markers",
+            marker=dict(color="#ef4444", size=9, symbol="triangle-down"),
+            name=f"Negative Anomaly ({len(down_anom)})"
+        ))
+    _c(fig_anom, legend_h=True)
+    fig_anom.update_layout(yaxis_title="Price (USD)")
+    st.plotly_chart(fig_anom, use_container_width=True)
+
+    if not anom_df.empty:
+        anom_show = anom_df[["Close", "Returns", "z_score"]].copy()
+        anom_show.index = anom_show.index.strftime("%Y-%m-%d")
+        anom_show["Returns"] = anom_show["Returns"].map("{:+.2%}".format)
+        anom_show["z_score"] = anom_show["z_score"].map("{:+.2f}σ".format)
+        anom_show["Close"]   = anom_show["Close"].map("${:.2f}".format)
+        anom_show.columns    = ["Close", "Daily Return", "Z-Score"]
+        st.dataframe(anom_show.tail(15), use_container_width=True)
+        st.markdown(_sig(f"<strong>{len(anom_df)}</strong> anomalous sessions detected over the full history — {len(up_anom)} positive, {len(down_anom)} negative.", "warn"), unsafe_allow_html=True)
+
+    # ── Portfolio Simulator ───────────────────────────────────────────────────
+    st.markdown(_sec("Portfolio Simulator · P&L Calculator", "blue"), unsafe_allow_html=True)
+    st.caption("Estimate unrealised P&L and project value using model forecasts.")
+    ps1, ps2, ps3 = st.columns(3)
+    with ps1:
+        shares   = st.number_input("Shares held", min_value=0.0, value=10.0, step=1.0)
+    with ps2:
+        avg_cost = st.number_input("Avg cost basis ($/share)", min_value=0.0, value=float(f"{cur_price:.2f}"), step=1.0)
+    with ps3:
+        fc_horizon = st.slider("Forecast horizon (days)", 1, 30, 7, key="ps_horizon")
+
+    current_val = shares * cur_price
+    cost_basis  = shares * avg_cost
+    unrealised  = current_val - cost_basis
+    unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else 0
+
+    # Quick LR forecast for the simulator
+    mu_ps, _, _ = forecast_lr(df, fc_horizon)
+    proj_price  = mu_ps.iloc[-1]
+    proj_val    = shares * proj_price
+    proj_pnl    = proj_val - cost_basis
+    proj_pnl_pct = (proj_pnl / cost_basis * 100) if cost_basis > 0 else 0
+
+    pa, pb, pc, pd_ = st.columns(4)
+    pa.metric("Current Value",      f"${current_val:,.2f}")
+    pb.metric("Unrealised P&L",     f"${unrealised:+,.2f}", f"{unrealised_pct:+.1f}%")
+    pc.metric(f"Projected Price ({fc_horizon}d)", f"${proj_price:.2f}")
+    pd_.metric("Projected P&L",     f"${proj_pnl:+,.2f}", f"{proj_pnl_pct:+.1f}%")
+
+    pnl_var = "bull" if unrealised >= 0 else "bear"
+    st.markdown(_sig(
+        f"Holding <strong>{shares:g} shares</strong> at avg cost <strong>${avg_cost:.2f}</strong> — "
+        f"current unrealised P&amp;L: <strong>${unrealised:+,.2f}</strong> ({unrealised_pct:+.1f}%). "
+        f"LR model projects <strong>${proj_price:.2f}</strong> in {fc_horizon} days → projected P&amp;L: <strong>${proj_pnl:+,.2f}</strong>.",
+        pnl_var
+    ), unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 7 — NEWS & SENTIMENT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_news:
     if not news:
@@ -1263,8 +1565,8 @@ with tab_news:
             marker_color=["#26a69a" if s > 0.05 else "#ef5350" if s < -0.05 else "#ffb300" for s in scores[:10]],
         ))
         fig_sent.add_vline(x=0, line_dash="dash", line_color="#7b8ab8")
-        fig_sent.update_layout(template="plotly_dark", xaxis_title="Sentiment Polarity",
-                                margin=dict(l=0, r=0, t=20, b=0), height=340)
+        _c(fig_sent, height=340)
+        fig_sent.update_layout(xaxis_title="Sentiment Polarity")
         st.plotly_chart(fig_sent, use_container_width=True)
 
         filt = st.selectbox("Filter", ["All", "Positive", "Neutral", "Negative"])
@@ -1330,20 +1632,32 @@ with tab_about:
           Feature importance via mean decrease in impurity<br>
           Reveals which signals drive next-day price prediction
         </div>
+        <div class="info-block">
+          <span class="ib-title">Signals & Anomaly Detection</span>
+          7-indicator signal scorecard — RSI, MACD, Bollinger, MA crossovers, Volume, Volatility<br>
+          Classic floor-trader pivot points (PP, R1/2/3, S1/2/3)<br>
+          Z-score anomaly detection on rolling 20-day window (±2.5σ threshold)<br>
+          Volatility regime detection — 30D vs 90D rolling vol comparison<br>
+          Portfolio P&L simulator with LR-projected price
+        </div>
         """, unsafe_allow_html=True)
 
     st.markdown(_sec("Tech Stack", "amber"), unsafe_allow_html=True)
     st.markdown("""
     | Layer | Tools |
     |---|---|
-    | Data ingestion | `yfinance`, `feedparser` |
+    | Data ingestion | `yfinance`, `feedparser`, CSV fallback |
     | Feature engineering | `ta`, `pandas`, `numpy` |
-    | Deep learning | `PyTorch` — LSTM, Seq2Seq |
+    | Deep learning | `PyTorch` — LSTM, Seq2Seq Encoder-Decoder |
     | Classical / ensemble ML | `scikit-learn` — LR, Random Forest |
-    | Statistics | `scipy` — normality tests, distribution fitting |
+    | Statistics | `scipy` — normality tests, distribution fitting, ACF |
+    | Risk analytics | VaR/CVaR, Sharpe, Sortino, Calmar, Max Drawdown, Rolling VaR |
+    | Simulation | Monte Carlo GBM — 500 paths, P10/P50/P90 |
+    | Anomaly detection | Z-score rolling window flagging |
+    | Technical signals | Pivot points, signal scorecard, regime detection |
     | NLP / Sentiment | `TextBlob` |
     | Visualisation | `Plotly` |
-    | App framework | `Streamlit` |
+    | App framework | `Streamlit` 1.31+ |
     | Deployment | Streamlit Cloud (free, serverless) |
     """)
 
