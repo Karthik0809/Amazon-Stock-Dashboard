@@ -1409,7 +1409,7 @@ with tab_mkt:
                 def color_returns(v):
                     if pd.isna(v): return ""
                     return "color:#10b981" if v >= 0 else "color:#ef4444"
-                st.dataframe(ret_df.style.format("{:.1f}").map(color_returns,
+                st.dataframe(ret_df.style.format("{:.1f}", na_rep="—").map(color_returns,
                     subset=["1M (%)","3M (%)","6M (%)","1Y (%)"]), width='stretch')
 
                 # Correlation
