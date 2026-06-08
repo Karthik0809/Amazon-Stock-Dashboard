@@ -1058,6 +1058,29 @@ def compute_model_comparison(_df):
         "naive_rmse": naive_rmse, "naive_mape": naive_mape_v,
     }
 
+@st.cache_data(ttl=7200, show_spinner=False)
+def compute_shap_auto(_df):
+    """Train a fast fixed-param XGBoost and return SHAP mean absolute values."""
+    try:
+        import shap
+        feat = _df[["RSI", "MACD", "MACD_Signal", "BB_width", "MA_ratio",
+                    "Vol_ratio", "Volatility", "Returns"]].copy()
+        feat["Price_vs_MA30"]  = (_df["Close"] - _df["MA30"]) / _df["MA30"]
+        feat["Price_vs_BB"]    = (_df["Close"] - _df["BB_mid"]) / (_df["BB_upper"] - _df["BB_lower"] + 1e-9)
+        feat["High_Low_ratio"] = (_df["High"] - _df["Low"]) / _df["Close"]
+        feat = feat.dropna()
+        target = _df["Close"].reindex(feat.index).shift(-1).dropna()
+        feat   = feat.reindex(target.index)
+        split  = int(len(feat) * 0.8)
+        mdl = XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.05,
+                           subsample=0.8, n_jobs=1, random_state=42)
+        mdl.fit(feat.iloc[:split], target.iloc[:split])
+        explainer = shap.TreeExplainer(mdl)
+        shap_vals = explainer.shap_values(feat.iloc[split:])
+        return pd.Series(np.abs(shap_vals).mean(axis=0), index=feat.columns).sort_values(ascending=True)
+    except Exception:
+        return None
+
 # ── Feature importance ────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def compute_feature_importance(_df):
@@ -1131,32 +1154,40 @@ for label, value, delta, variant in kpis:
 card_html += "</div>"
 st.markdown(card_html, unsafe_allow_html=True)
 
-# ── Results Summary Banner ────────────────────────────────────────────────────
-st.markdown("""
+# ── Results Summary Banner (live-computed) ───────────────────────────────────
+_comp      = compute_model_comparison(df)
+_naive_r   = _comp["naive_rmse"]
+_best_r    = min(r for r in _comp["rmse"] if r != _naive_r)
+_improv    = (_naive_r - _best_r) / _naive_r * 100
+_best_name = _comp["models"][_comp["rmse"].index(_best_r)]
+_sig_df    = backtest_signals(df)
+_n_sig     = int((_sig_df["Significant"] == "p<0.05 significant").sum()) if len(_sig_df) > 0 else 0
+_best_rmse_val = min(_comp["rmse"])
+st.markdown(f"""
 <div style="display:flex;gap:12px;flex-wrap:wrap;margin:14px 0 10px;padding:14px 18px;
             background:linear-gradient(135deg,#eff6ff 0%,#f0fdf4 100%);
             border:1px solid #bfdbfe;border-radius:10px;align-items:center">
   <div style="flex:1;min-width:200px">
     <div style="font-size:0.65rem;font-weight:700;letter-spacing:.08em;color:#2563eb;text-transform:uppercase;margin-bottom:4px">Key Results</div>
     <div style="font-size:0.82rem;color:#0f172a;line-height:1.55">
-      XGBoost beat naive baseline by <strong>~18% RMSE</strong> &nbsp;·&nbsp;
-      Seq2Seq LSTM outperforms one-step LSTM on 7-day horizons &nbsp;·&nbsp;
-      Signal backtests show RSI &lt;30 has <strong>statistically significant</strong> forward returns (p&lt;0.05) &nbsp;·&nbsp;
-      No model reliably predicts turning points — consistent with EMH
+      Best model (<strong>{_best_name}</strong>) beats naive baseline by <strong>{_improv:.1f}% RMSE</strong>&nbsp;&middot;&nbsp;
+      {_n_sig} of {len(_sig_df)} signals statistically significant (p&lt;0.05)&nbsp;&middot;&nbsp;
+      Seq2Seq direct multi-step avoids error accumulation of one-step rollout&nbsp;&middot;&nbsp;
+      No model reliably predicts turning points &mdash; consistent with EMH
     </div>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <div style="background:#fff;border:1px solid #bfdbfe;border-radius:6px;padding:6px 12px;text-align:center">
-      <div style="font-size:0.65rem;color:#2563eb;font-weight:600">MODELS</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#0f172a">4</div>
+      <div style="font-size:0.65rem;color:#2563eb;font-weight:600">BEST RMSE</div>
+      <div style="font-size:1.1rem;font-weight:700;color:#0f172a">${_best_rmse_val:.0f}</div>
     </div>
     <div style="background:#fff;border:1px solid #bbf7d0;border-radius:6px;padding:6px 12px;text-align:center">
-      <div style="font-size:0.65rem;color:#059669;font-weight:600">FEATURES</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#0f172a">11</div>
+      <div style="font-size:0.65rem;color:#059669;font-weight:600">VS NAIVE</div>
+      <div style="font-size:1.1rem;font-weight:700;color:#059669">-{_improv:.1f}%</div>
     </div>
     <div style="background:#fff;border:1px solid #fed7aa;border-radius:6px;padding:6px 12px;text-align:center">
-      <div style="font-size:0.65rem;color:#d97706;font-weight:600">SIGNALS</div>
-      <div style="font-size:1.1rem;font-weight:700;color:#0f172a">5</div>
+      <div style="font-size:0.65rem;color:#d97706;font-weight:600">SIG SIGNALS</div>
+      <div style="font-size:1.1rem;font-weight:700;color:#0f172a">{_n_sig}/{len(_sig_df)}</div>
     </div>
   </div>
 </div>
@@ -1653,7 +1684,28 @@ with tab_wf:
       </ul>
     </div>""", unsafe_allow_html=True)
 
-    # ── XGBoost with RandomizedSearchCV (lazy) ───────────────────────────────
+    # ── Auto-SHAP (loads on tab open, fast fixed-param model) ──────────────────
+    st.markdown(_sec("SHAP Feature Importance · XGBoost Interpretability", "teal"), unsafe_allow_html=True)
+    st.caption("Mean absolute SHAP values on the held-out 20% test set — shows which features drive XGBoost predictions. Computed from a fast fixed-param model; train below for tuned-model SHAP.")
+    with st.spinner("Computing SHAP values…"):
+        _shap_auto = compute_shap_auto(df)
+    if _shap_auto is not None:
+        fig_shap_auto = go.Figure(go.Bar(
+            x=_shap_auto.values, y=_shap_auto.index, orientation="h",
+            marker_color="#2563eb", opacity=0.85
+        ))
+        _c(fig_shap_auto, height=320)
+        fig_shap_auto.update_layout(xaxis_title="Mean |SHAP value|")
+        st.plotly_chart(fig_shap_auto, width='stretch')
+        _top = _shap_auto.index[-1]
+        st.markdown(_sig(
+            f"<strong>{_top}</strong> is the most influential feature. SHAP measures actual contribution to each prediction — more reliable than built-in gain importance for correlated features.",
+            "bull"
+        ), unsafe_allow_html=True)
+    else:
+        st.info("Install `shap` to enable this section: `pip install shap`")
+
+        # ── XGBoost with RandomizedSearchCV (lazy) ───────────────────────────────
     st.markdown(_sec("XGBoost · RandomizedSearchCV Hyperparameter Tuning", "blue"), unsafe_allow_html=True)
     st.caption("30 iterations · 5-fold CV · optimised for RMSE · 11 features including technical indicators")
     st.markdown(_sig("Training runs RandomizedSearchCV (5 iter × 3 fold). Click below to train — takes ~10–20 seconds.", "warn"), unsafe_allow_html=True)
@@ -1684,7 +1736,7 @@ with tab_wf:
 
             fig_xgb = go.Figure()
             fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_actual, name="Actual",
-                                          line=dict(color="#d8e3f5", width=2)))
+                                          line=dict(color="#0f172a", width=2)))
             fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_pred,   name="XGBoost",
                                           line=dict(color="#10b981", width=1.5, dash="dot")))
             _c(fig_xgb, legend_h=True)
