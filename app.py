@@ -776,11 +776,11 @@ def train_xgboost(_df):
         "reg_alpha":        [0, 0.1, 0.5],
         "reg_lambda":       [0.5, 1.0, 1.5],
     }
-    xgb = XGBRegressor(random_state=42, verbosity=0, n_jobs=-1)
+    xgb = XGBRegressor(random_state=42, verbosity=0, n_jobs=1)
     search = RandomizedSearchCV(
-        xgb, param_dist, n_iter=30, cv=5,
+        xgb, param_dist, n_iter=5, cv=3,
         scoring="neg_root_mean_squared_error",
-        random_state=42, n_jobs=-1, refit=True
+        random_state=42, n_jobs=1, refit=True
     )
     search.fit(X_tr, y_tr)
     best   = search.best_estimator_
@@ -1485,11 +1485,11 @@ with tab_wf:
     # ── XGBoost with RandomizedSearchCV (lazy) ───────────────────────────────
     st.markdown(_sec("XGBoost · RandomizedSearchCV Hyperparameter Tuning", "blue"), unsafe_allow_html=True)
     st.caption("30 iterations · 5-fold CV · optimised for RMSE · 11 features including technical indicators")
-    st.markdown(_sig("Training runs RandomizedSearchCV (30 iter × 5 fold). Click below to train — takes ~30–60 seconds.", "warn"), unsafe_allow_html=True)
+    st.markdown(_sig("Training runs RandomizedSearchCV (5 iter × 3 fold). Click below to train — takes ~10–20 seconds.", "warn"), unsafe_allow_html=True)
 
     if st.button("▶ Train XGBoost + Walk-Forward", key="run_wf_btn"):
         try:
-            with st.spinner("Training XGBoost with RandomizedSearchCV (30 iters × 5 folds)…"):
+            with st.spinner("Training XGBoost with RandomizedSearchCV (5 iters × 3 folds)…"):
                 xgb_model, best_params, xgb_rmse, xgb_mape, xgb_r2, xgb_fi, xgb_idx, xgb_actual, xgb_pred = train_xgboost(df)
 
             x1, x2, x3 = st.columns(3)
