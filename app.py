@@ -1071,7 +1071,7 @@ with tab_fc:
             ))
         _c(fig, legend_h=True)
         fig.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
     direction = "upward" if trend_up else "downward"
     variant   = "bull" if trend_up else "bear"
@@ -1101,7 +1101,7 @@ with tab_fc:
         fdf["Lower 95%"] = [f"${v:.2f}" for v in lo.values]
         fdf["Upper 95%"] = [f"${v:.2f}" for v in hi.values]
     fdf["Forecast ($)"] = fdf["Forecast ($)"].map("${:.2f}".format)
-    st.dataframe(fdf, use_container_width=True, hide_index=True)
+    st.dataframe(fdf, width='stretch', hide_index=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 2 — TECHNICAL ANALYSIS
@@ -1127,7 +1127,7 @@ with tab_tech:
     _c(fig_price, height=420)
     fig_price.update_layout(xaxis_title="Date", yaxis_title="Price (USD)",
                              xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig_price, use_container_width=True)
+    st.plotly_chart(fig_price, width='stretch')
 
     col_rsi, col_macd = st.columns(2)
     with col_rsi:
@@ -1140,7 +1140,7 @@ with tab_tech:
         fig_rsi.add_hrect(y0=0,  y1=30,  fillcolor="rgba(38,166,154,0.07)", line_width=0)
         _c(fig_rsi)
         fig_rsi.update_layout(yaxis=dict(range=[0, 100]))
-        st.plotly_chart(fig_rsi, use_container_width=True)
+        st.plotly_chart(fig_rsi, width='stretch')
         rsi_val = dv["RSI"].iloc[-1]
         if rsi_val > 70:
             st.markdown(_sig(f"RSI = {rsi_val:.1f} — potentially <strong>overbought</strong>. Watch for reversal.", "bear"), unsafe_allow_html=True)
@@ -1157,7 +1157,7 @@ with tab_tech:
         fig_macd.add_trace(go.Bar(x=dv.index, y=dv["MACD_Hist"], name="Histogram",
                                   marker_color=["#26a69a" if v >= 0 else "#ef5350" for v in dv["MACD_Hist"]], opacity=0.7))
         _c(fig_macd)
-        st.plotly_chart(fig_macd, use_container_width=True)
+        st.plotly_chart(fig_macd, width='stretch')
         if dv["MACD"].iloc[-1] > dv["MACD_Signal"].iloc[-1]:
             st.markdown(_sig("MACD above Signal line — <strong>bullish momentum</strong>.", "bull"), unsafe_allow_html=True)
         else:
@@ -1171,7 +1171,7 @@ with tab_tech:
                       annotation_text=f"20-day avg {avg_vol/1e6:.0f}M")
     _c(fig_vol)
     fig_vol.update_layout(yaxis_title="Shares")
-    st.plotly_chart(fig_vol, use_container_width=True)
+    st.plotly_chart(fig_vol, width='stretch')
 
     st.markdown(_sec("RSI Strategy vs Buy &amp; Hold · Backtest", "teal"), unsafe_allow_html=True)
     bt       = backtest_rsi(dv)
@@ -1181,7 +1181,7 @@ with tab_tech:
     fig_bt.add_trace(go.Scatter(x=buy_hold.index, y=buy_hold, name="Buy & Hold", line=dict(color="#5c6bc0", width=2, dash="dot")))
     _c(fig_bt, legend_h=True)
     fig_bt.update_layout(yaxis_title="Cumulative Return")
-    st.plotly_chart(fig_bt, use_container_width=True)
+    st.plotly_chart(fig_bt, width='stretch')
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 3 — RISK ANALYTICS
@@ -1216,7 +1216,7 @@ with tab_risk:
                                  line=dict(color="#ef5350", width=1.5), name="Drawdown %"))
     _c(fig_dd)
     fig_dd.update_layout(yaxis_title="Drawdown (%)")
-    st.plotly_chart(fig_dd, use_container_width=True)
+    st.plotly_chart(fig_dd, width='stretch')
 
     st.markdown(_sec("Rolling 90-Day Sharpe Ratio"), unsafe_allow_html=True)
     roll_ret = df["Returns"].rolling(90).mean()
@@ -1229,7 +1229,7 @@ with tab_risk:
     fig_rs.add_hline(y=0, line_dash="dash", line_color="#ef5350")
     _c(fig_rs)
     fig_rs.update_layout(yaxis_title="Sharpe Ratio")
-    st.plotly_chart(fig_rs, use_container_width=True)
+    st.plotly_chart(fig_rs, width='stretch')
 
     st.markdown(_sec("Return Distribution · Normality Analysis", "amber"), unsafe_allow_html=True)
     col_dist, col_stats = st.columns([2, 1])
@@ -1246,7 +1246,7 @@ with tab_risk:
                            annotation_text="VaR 95%")
         _c(fig_dist)
         fig_dist.update_layout(xaxis_title="Daily Return", yaxis_title="Density")
-        st.plotly_chart(fig_dist, use_container_width=True)
+        st.plotly_chart(fig_dist, width='stretch')
     with col_stats:
         norm_flag = rm["p_normal"] < 0.05
         kurt_flag = rm["kurt"] > 0
@@ -1274,7 +1274,7 @@ with tab_risk:
                        annotation_text=f"Mean VaR {roll_var.mean():.2f}%")
     _c(fig_rvar)
     fig_rvar.update_layout(yaxis_title="VaR 95% (%)")
-    st.plotly_chart(fig_rvar, use_container_width=True)
+    st.plotly_chart(fig_rvar, width='stretch')
 
     st.markdown(_sec("Volatility Regime · 30D vs 90D Rolling Annualised Vol", "amber"), unsafe_allow_html=True)
     st.caption("Regime detection via rolling volatility comparison — high-vol vs low-vol periods.")
@@ -1298,7 +1298,7 @@ with tab_risk:
                           annotation_text="Regime Threshold")
     _c(fig_regime, legend_h=True)
     fig_regime.update_layout(yaxis_title="Annualised Volatility (%)")
-    st.plotly_chart(fig_regime, use_container_width=True)
+    st.plotly_chart(fig_regime, width='stretch')
     curr_regime = "HIGH VOLATILITY" if vol30.iloc[-1] > vol_threshold else "LOW VOLATILITY"
     rv = "warn" if curr_regime == "HIGH VOLATILITY" else "bull"
     st.markdown(_sig(f"Current regime: <strong>{curr_regime}</strong> — 30D vol ({vol30.iloc[-1]:.1f}%) vs 90D baseline ({vol_threshold:.1f}%). Red shading = high-vol periods.", rv), unsafe_allow_html=True)
@@ -1329,7 +1329,7 @@ with tab_mkt:
                                    line=dict(color="#5c6bc0", width=1.5), name="AMZN Close"))
     _c(fig_amzn)
     fig_amzn.update_layout(yaxis_title="Price (USD)")
-    st.plotly_chart(fig_amzn, use_container_width=True)
+    st.plotly_chart(fig_amzn, width='stretch')
 
     st.markdown(_sec("Monthly Returns Heatmap", "amber"), unsafe_allow_html=True)
     monthly = df["Close"].resample("ME").last().pct_change().dropna() * 100
@@ -1343,7 +1343,7 @@ with tab_mkt:
     fig_heat = px.imshow(pivot, text_auto=".1f", color_continuous_scale="RdYlGn",
                           zmin=-20, zmax=20, aspect="auto")
     _c(fig_heat)
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width='stretch')
 
     # ── Peer Comparison (lazy — user clicks to load) ──────────────────────────
     st.markdown(_sec("Peer Comparison · MSFT GOOGL META AAPL SPY", "teal"), unsafe_allow_html=True)
@@ -1376,7 +1376,7 @@ with tab_mkt:
                 fig_peers.add_hline(y=100, line_dash="dash", line_color="#7b8ab8")
                 _c(fig_peers, legend_h=True)
                 fig_peers.update_layout(yaxis_title="Indexed Price (Base = 100)")
-                st.plotly_chart(fig_peers, use_container_width=True)
+                st.plotly_chart(fig_peers, width='stretch')
 
                 # Returns table
                 ret_rows = []
@@ -1391,7 +1391,7 @@ with tab_mkt:
                     if pd.isna(v): return ""
                     return "color:#10b981" if v >= 0 else "color:#ef4444"
                 st.dataframe(ret_df.style.format("{:.1f}").map(color_returns,
-                    subset=["1M (%)","3M (%)","6M (%)","1Y (%)"]), use_container_width=True)
+                    subset=["1M (%)","3M (%)","6M (%)","1Y (%)"]), width='stretch')
 
                 # Correlation
                 if len(peers_df.columns) > 1:
@@ -1400,7 +1400,7 @@ with tab_mkt:
                                           text_auto=".2f", color_continuous_scale="RdBu_r",
                                           zmin=-1, zmax=1, aspect="auto")
                     _c(fig_corr)
-                    st.plotly_chart(fig_corr, use_container_width=True)
+                    st.plotly_chart(fig_corr, width='stretch')
 
                 # Beta
                 if "SPY" in peers_df.columns:
@@ -1418,7 +1418,7 @@ with tab_mkt:
                                               marker_color=["#10b981" if b<1 else "#ef4444" for b in bdf["Beta"]]))
                     fig_b.add_hline(y=1, line_dash="dash", line_color="#f59e0b")
                     _c(fig_b)
-                    st.plotly_chart(fig_b, use_container_width=True)
+                    st.plotly_chart(fig_b, width='stretch')
 
                 # Cointegration
                 st.markdown(_sec("Cointegration & Pair Trading · Engle-Granger", "purple"), unsafe_allow_html=True)
@@ -1426,7 +1426,7 @@ with tab_mkt:
                     coint_results = run_cointegration(peers_df)
                     if coint_results:
                         coint_display = [{k:v for k,v in r.items() if not k.startswith("_")} for r in coint_results]
-                        st.dataframe(pd.DataFrame(coint_display), use_container_width=True, hide_index=True)
+                        st.dataframe(pd.DataFrame(coint_display), width='stretch', hide_index=True)
                         best = min(coint_results, key=lambda x: x["Coint p-val"])
                         spread = best["_spread"]
                         z_spread = (spread - spread.mean()) / spread.std()
@@ -1439,7 +1439,7 @@ with tab_mkt:
                         fig_sp.add_hline(y=0,  line_dash="dot",  line_color="#7d93b8")
                         _c(fig_sp)
                         fig_sp.update_layout(yaxis_title="Z-Score")
-                        st.plotly_chart(fig_sp, use_container_width=True)
+                        st.plotly_chart(fig_sp, width='stretch')
                 except Exception as ce:
                     st.markdown(_sig(f"Cointegration unavailable: {str(ce)[:100]}", "warn"), unsafe_allow_html=True)
 
@@ -1498,7 +1498,7 @@ with tab_wf:
                                           line=dict(color="#10b981", width=1.5, dash="dot")))
             _c(fig_xgb, legend_h=True)
             fig_xgb.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-            st.plotly_chart(fig_xgb, use_container_width=True)
+            st.plotly_chart(fig_xgb, width='stretch')
 
             st.markdown(_sec("XGBoost Feature Importance", "teal"), unsafe_allow_html=True)
             fig_xfi = go.Figure(go.Bar(
@@ -1507,7 +1507,7 @@ with tab_wf:
             ))
             _c(fig_xfi, height=360)
             fig_xfi.update_layout(xaxis_title="Importance (Gain)")
-            st.plotly_chart(fig_xfi, use_container_width=True)
+            st.plotly_chart(fig_xfi, width='stretch')
 
             # Walk-forward validation
             st.markdown(_sec("Walk-Forward Validation · LR vs XGBoost", "amber"), unsafe_allow_html=True)
@@ -1530,7 +1530,7 @@ with tab_wf:
                                              line=dict(color="#10b981", width=1.5, dash="dot")))
                 _c(fig_wf, legend_h=True)
                 fig_wf.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-                st.plotly_chart(fig_wf, use_container_width=True)
+                st.plotly_chart(fig_wf, width='stretch')
 
                 wf_df_tmp = pd.DataFrame({"actual": wf_actual, "lr": wf_lr, "xgb": wf_xgb},
                                           index=pd.to_datetime(wf_dates))
@@ -1545,7 +1545,7 @@ with tab_wf:
                                                 name="XGB RMSE", line=dict(color="#10b981", width=1.5)))
                 _c(fig_rrmse, legend_h=True)
                 fig_rrmse.update_layout(yaxis_title="RMSE ($)")
-                st.plotly_chart(fig_rrmse, use_container_width=True)
+                st.plotly_chart(fig_rrmse, width='stretch')
 
                 better = "XGBoost" if mape(wf_actual, wf_xgb) < mape(wf_actual, wf_lr) else "Linear Regression"
                 st.markdown(_sig(
@@ -1643,7 +1643,7 @@ with tab_sig:
                            annotation_font_color=col, annotation_font_size=9)
     _c(fig_pvt, height=340)
     fig_pvt.update_layout(yaxis_title="Price (USD)", xaxis_title="Date")
-    st.plotly_chart(fig_pvt, use_container_width=True)
+    st.plotly_chart(fig_pvt, width='stretch')
 
     # nearest S/R signal
     nearest_r = min([pvt["R1"], pvt["R2"], pvt["R3"]], key=lambda x: abs(x - cur_price))
@@ -1677,7 +1677,7 @@ with tab_sig:
         ))
     _c(fig_anom, legend_h=True)
     fig_anom.update_layout(yaxis_title="Price (USD)")
-    st.plotly_chart(fig_anom, use_container_width=True)
+    st.plotly_chart(fig_anom, width='stretch')
 
     if not anom_df.empty:
         anom_show = anom_df[["Close", "Returns", "z_score"]].copy()
@@ -1686,7 +1686,7 @@ with tab_sig:
         anom_show["z_score"] = anom_show["z_score"].map("{:+.2f}σ".format)
         anom_show["Close"]   = anom_show["Close"].map("${:.2f}".format)
         anom_show.columns    = ["Close", "Daily Return", "Z-Score"]
-        st.dataframe(anom_show.tail(15), use_container_width=True)
+        st.dataframe(anom_show.tail(15), width='stretch')
         st.markdown(_sig(f"<strong>{len(anom_df)}</strong> anomalous sessions detected over the full history — {len(up_anom)} positive, {len(down_anom)} negative.", "warn"), unsafe_allow_html=True)
 
     # ── Portfolio Simulator ───────────────────────────────────────────────────
@@ -1780,7 +1780,7 @@ with tab_sig:
         paper_bgcolor="#05080f", font=dict(color="#7d93b8", family="Space Mono, monospace"),
         margin=dict(l=0, r=0, t=20, b=0), height=460,
     )
-    st.plotly_chart(fig_surf, use_container_width=True)
+    st.plotly_chart(fig_surf, width='stretch')
     moneyness = "IN-THE-MONEY" if (S_bs > K_bs and opt_t == "call") or (S_bs < K_bs and opt_t == "put") else "OUT-OF-THE-MONEY" if (S_bs < K_bs and opt_t == "call") or (S_bs > K_bs and opt_t == "put") else "AT-THE-MONEY"
     st.markdown(_sig(
         f"{opt_t.upper()} option — S=${S_bs:.2f}, K=${K_bs:.2f} → <strong>{moneyness}</strong>. "
@@ -1852,7 +1852,7 @@ with tab_news:
             fig_pie.update_traces(hovertemplate="%{label}: %{value} articles")
             _c(fig_pie, height=220)
             fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width='stretch')
 
         with bc:
             titles_short = [e.title[:60] + "…" if len(e.title) > 60 else e.title for e in news[:10]]
@@ -1864,7 +1864,7 @@ with tab_news:
             fig_sent.add_vline(x=0, line_dash="dash", line_color="#7b8ab8")
             _c(fig_sent, height=330)
             fig_sent.update_layout(xaxis_title="FinBERT Polarity Score")
-            st.plotly_chart(fig_sent, use_container_width=True)
+            st.plotly_chart(fig_sent, width='stretch')
 
         filt = st.selectbox("Filter articles", ["All", "Positive", "Neutral", "Negative"])
         st.markdown("---")
