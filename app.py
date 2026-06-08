@@ -551,6 +551,7 @@ class OneStepLSTM(nn.Module):
         return self.fc(out[:, -1, :])
 
 # ── Forecast helpers ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
 def forecast_lr(df, n_days):
     data = df[-120:].copy()
     data["ord"] = data.index.map(pd.Timestamp.toordinal)
@@ -565,6 +566,7 @@ def forecast_lr(df, n_days):
             pd.Series(mu - 1.96 * ci, index=future),
             pd.Series(mu + 1.96 * ci, index=future))
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def forecast_lstm(df, seq_len, n_days):
     feats  = df[["Open", "High", "Low", "Close", "Volume"]].values
     scaler = MinMaxScaler().fit(feats)
@@ -594,6 +596,7 @@ def forecast_lstm(df, seq_len, n_days):
     ci = resid_std * np.sqrt(np.arange(1, n_days + 1))
     return mu, mu - 1.96 * ci, mu + 1.96 * ci
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def forecast_seq2seq(df, seq_len, n_days):
     closes = df[["Close"]].values
     scaler = MinMaxScaler().fit(closes)
@@ -608,6 +611,7 @@ def forecast_seq2seq(df, seq_len, n_days):
     future = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=n_days)
     return pd.Series(inv, index=future), None, None
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def monte_carlo_gbm(df, n_days=30, n_sims=500, seed=42):
     np.random.seed(seed)
     rets  = df["Returns"].dropna().values[-252:]
@@ -906,6 +910,7 @@ def finbert_sentiment(pipe, texts):
     return results
 
 # ── Risk metrics ──────────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
 def compute_risk_metrics(returns, rf_annual=0.05):
     r  = returns.dropna()
     rf = rf_annual / 252
