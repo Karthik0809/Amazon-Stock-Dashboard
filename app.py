@@ -8,12 +8,15 @@ import plotly.graph_objects as go
 import plotly.express as px
 import ta
 import feedparser
-from textblob import TextBlob
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import RandomizedSearchCV
+from xgboost import XGBRegressor
 from scipy import stats
+from scipy.stats import norm as sp_norm
+from statsmodels.tsa.stattools import coint, adfuller
 from seq2seq_lstm import Seq2SeqLSTM, make_multi_sequences
 
 SEQ_LEN = 30
@@ -529,7 +532,8 @@ df["Returns"]     = df["Close"].pct_change()
 df["Volatility"]  = df["Returns"].rolling(30).std() * np.sqrt(252) * 100
 df["BB_width"]    = (df["BB_upper"] - df["BB_lower"]) / df["BB_mid"]
 df["MA_ratio"]    = df["MA7"] / df["MA30"]
-df["Vol_ratio"]   = df["Volume"] / df["Volume"].rolling(20).mean()
+df["Vol_ratio"]      = df["Volume"] / df["Volume"].rolling(20).mean()
+df["High_Low_ratio"] = (df["High"] - df["Low"]) / df["Close"]
 
 # ── Model definition ──────────────────────────────────────────────────────────
 class OneStepLSTM(nn.Module):
@@ -713,6 +717,191 @@ def mape(y_true, y_pred):
     mask = y_true != 0
     return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
 
+# ── Black-Scholes Options Pricing & Greeks ────────────────────────────────────
+def black_scholes(S, K, T, r, sigma, opt_type="call"):
+    """Return (price, delta, gamma, theta, vega, rho) for European option."""
+    if T <= 0:
+        return (max(S - K, 0) if opt_type == "call" else max(K - S, 0),
+                1.0 if opt_type == "call" and S > K else 0.0,
+                0, 0, 0, 0)
+    d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    if opt_type == "call":
+        price = S * sp_norm.cdf(d1) - K * np.exp(-r * T) * sp_norm.cdf(d2)
+        delta = sp_norm.cdf(d1)
+        rho   = K * T * np.exp(-r * T) * sp_norm.cdf(d2) / 100
+        theta = (-S * sp_norm.pdf(d1) * sigma / (2 * np.sqrt(T))
+                 - r * K * np.exp(-r * T) * sp_norm.cdf(d2)) / 365
+    else:
+        price = K * np.exp(-r * T) * sp_norm.cdf(-d2) - S * sp_norm.cdf(-d1)
+        delta = sp_norm.cdf(d1) - 1
+        rho   = -K * T * np.exp(-r * T) * sp_norm.cdf(-d2) / 100
+        theta = (-S * sp_norm.pdf(d1) * sigma / (2 * np.sqrt(T))
+                 + r * K * np.exp(-r * T) * sp_norm.cdf(-d2)) / 365
+    gamma = sp_norm.pdf(d1) / (S * sigma * np.sqrt(T))
+    vega  = S * sp_norm.pdf(d1) * np.sqrt(T) / 100
+    return price, delta, gamma, theta, vega, rho
+
+# ── XGBoost with RandomizedSearchCV ──────────────────────────────────────────
+@st.cache_data(ttl=7200)
+def train_xgboost(_df):
+    """Train XGBoost regressor with RandomizedSearchCV on technical features."""
+    feat = _df[["RSI", "MACD", "MACD_Signal", "BB_width", "MA_ratio",
+                "Vol_ratio", "Volatility", "Returns"]].copy()
+    feat["Price_vs_MA30"]  = (_df["Close"] - _df["MA30"]) / _df["MA30"]
+    feat["Price_vs_BB"]    = (_df["Close"] - _df["BB_mid"]) / (_df["BB_upper"] - _df["BB_lower"] + 1e-9)
+    feat["High_Low_ratio"] = (_df["High"] - _df["Low"]) / _df["Close"]
+    feat["Target"]         = _df["Close"].shift(-1)
+    feat = feat.dropna()
+    split = int(len(feat) * 0.8)
+    X_tr, y_tr = feat.drop("Target", axis=1).iloc[:split], feat["Target"].iloc[:split]
+    X_te, y_te = feat.drop("Target", axis=1).iloc[split:], feat["Target"].iloc[split:]
+
+    param_dist = {
+        "n_estimators":     [100, 200, 300, 400],
+        "max_depth":        [3, 4, 5, 6],
+        "learning_rate":    [0.01, 0.05, 0.1, 0.15],
+        "subsample":        [0.7, 0.8, 0.9, 1.0],
+        "colsample_bytree": [0.7, 0.8, 0.9, 1.0],
+        "min_child_weight": [1, 3, 5],
+        "reg_alpha":        [0, 0.1, 0.5],
+        "reg_lambda":       [0.5, 1.0, 1.5],
+    }
+    xgb = XGBRegressor(random_state=42, verbosity=0, n_jobs=-1)
+    search = RandomizedSearchCV(
+        xgb, param_dist, n_iter=30, cv=5,
+        scoring="neg_root_mean_squared_error",
+        random_state=42, n_jobs=-1, refit=True
+    )
+    search.fit(X_tr, y_tr)
+    best   = search.best_estimator_
+    preds  = best.predict(X_te)
+    rmse   = np.sqrt(mean_squared_error(y_te, preds))
+    mape_v = mape(y_te.values, preds)
+    r2     = r2_score(y_te, preds)
+    fi     = pd.Series(best.feature_importances_, index=X_tr.columns).sort_values()
+    return best, search.best_params_, rmse, mape_v, r2, fi, X_te.index, y_te.values, preds
+
+# ── Walk-Forward Validation ───────────────────────────────────────────────────
+@st.cache_data(ttl=7200)
+def walk_forward_validation(_df, window=252, step=21):
+    """
+    Rolling walk-forward validation.
+    Train on `window` days, predict next `step` days, advance by `step`.
+    Returns actual prices, LR predictions, XGB predictions, and dates.
+    """
+    closes = _df["Close"].values
+    dates  = _df.index
+    feat_cols = ["RSI", "MACD", "MACD_Signal", "BB_width", "MA_ratio",
+                 "Vol_ratio", "Volatility", "Returns", "High_Low_ratio"]
+    _df2 = _df.copy()
+    _df2["High_Low_ratio"] = (_df2["High"] - _df2["Low"]) / _df2["Close"]
+
+    all_dates, all_actual, all_lr, all_xgb = [], [], [], []
+    idx = window
+    while idx + step <= len(_df):
+        train_close = closes[idx - window : idx]
+        test_close  = closes[idx : idx + step]
+        train_dates = dates[idx - window : idx]
+        test_dates  = dates[idx : idx + step]
+
+        # LR on ordinal dates
+        ord_tr = np.array([d.toordinal() for d in train_dates]).reshape(-1, 1)
+        ord_te = np.array([d.toordinal() for d in test_dates]).reshape(-1, 1)
+        lr = LinearRegression().fit(ord_tr, train_close)
+        lr_pred = lr.predict(ord_te)
+
+        # XGB on features
+        try:
+            feat_tr = _df2[feat_cols].iloc[idx - window : idx].copy()
+            feat_tr["Target"] = closes[idx - window + 1 : idx + 1]
+            feat_tr = feat_tr.dropna()
+            if len(feat_tr) > 10:
+                xgb = XGBRegressor(n_estimators=100, max_depth=4, learning_rate=0.1,
+                                   random_state=42, verbosity=0)
+                xgb.fit(feat_tr.drop("Target", axis=1), feat_tr["Target"])
+                feat_te = _df2[feat_cols].iloc[idx : idx + step].fillna(method="ffill").values
+                xgb_pred = xgb.predict(feat_te)
+            else:
+                xgb_pred = lr_pred
+        except Exception:
+            xgb_pred = lr_pred
+
+        all_dates.extend(test_dates)
+        all_actual.extend(test_close)
+        all_lr.extend(lr_pred)
+        all_xgb.extend(xgb_pred)
+        idx += step
+
+    return (np.array(all_dates), np.array(all_actual),
+            np.array(all_lr), np.array(all_xgb))
+
+# ── Cointegration & Pair Trading ──────────────────────────────────────────────
+def run_cointegration(peers_df, base="AMZN"):
+    """Test AMZN vs each peer for cointegration using Engle-Granger test."""
+    if base not in peers_df.columns:
+        return []
+    base_s  = peers_df[base].dropna()
+    results = []
+    for ticker in [c for c in peers_df.columns if c != base]:
+        peer_s = peers_df[ticker].dropna()
+        common = base_s.index.intersection(peer_s.index)
+        if len(common) < 60:
+            continue
+        score, pval, _ = coint(base_s[common], peer_s[common])
+        # Calculate spread and half-life
+        from statsmodels.regression.linear_model import OLS
+        import statsmodels.api as sm
+        ols = OLS(base_s[common].values, sm.add_constant(peer_s[common].values)).fit()
+        hedge = ols.params[1]
+        spread = base_s[common] - hedge * peer_s[common]
+        # Spread ADF test
+        adf_stat, adf_p, *_ = adfuller(spread.dropna())
+        # Half-life via AR(1)
+        lag_spread = spread.shift(1).dropna()
+        delta      = spread.diff().dropna()
+        common_idx = lag_spread.index.intersection(delta.index)
+        ar_ols     = OLS(delta[common_idx].values, sm.add_constant(lag_spread[common_idx].values)).fit()
+        half_life  = max(1, int(-np.log(2) / ar_ols.params[1])) if ar_ols.params[1] < 0 else None
+        results.append({
+            "Pair":       f"AMZN/{ticker}",
+            "Hedge Ratio": round(hedge, 4),
+            "Coint p-val": round(pval, 4),
+            "ADF p-val":   round(adf_p, 4),
+            "Half-Life":   f"{half_life}d" if half_life else "N/A",
+            "Cointegrated": "✅ YES" if pval < 0.05 else "❌ NO",
+            "_spread":     spread,
+            "_ticker":     ticker,
+        })
+    return results
+
+# ── FinBERT Sentiment ─────────────────────────────────────────────────────────
+@st.cache_resource(show_spinner="Loading FinBERT model…")
+def load_finbert():
+    from transformers import pipeline
+    return pipeline(
+        "text-classification",
+        model="ProsusAI/finbert",
+        device=-1,            # CPU
+        truncation=True,
+        max_length=512,
+    )
+
+def finbert_sentiment(pipe, texts):
+    """Return list of (label, score) for each text."""
+    results = []
+    for t in texts:
+        try:
+            out = pipe(t[:512])[0]
+            label = out["label"].lower()   # positive / negative / neutral
+            score = out["score"]
+            # map to polarity: positive→+score, negative→-score, neutral→0
+            polarity = score if label == "positive" else (-score if label == "negative" else 0.0)
+            results.append((label, polarity))
+        except Exception:
+            results.append(("neutral", 0.0))
+    return results
+
 # ── Risk metrics ──────────────────────────────────────────────────────────────
 def compute_risk_metrics(returns, rf_annual=0.05):
     r  = returns.dropna()
@@ -814,9 +1003,9 @@ card_html += "</div>"
 st.markdown(card_html, unsafe_allow_html=True)
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_fc, tab_tech, tab_risk, tab_mkt, tab_models, tab_sig, tab_news, tab_about = st.tabs([
+tab_fc, tab_tech, tab_risk, tab_mkt, tab_wf, tab_sig, tab_news, tab_about = st.tabs([
     "🔮 Forecast", "📉 Technical Analysis", "📊 Risk Analytics",
-    "🌐 Market Context", "🤖 Model Performance", "📡 Signals & Anomalies",
+    "🌐 Market Context", "🔁 Walk-Forward Validation", "📡 Signals & Anomalies",
     "📰 News & Sentiment", "ℹ️ About"
 ])
 
@@ -826,7 +1015,7 @@ tab_fc, tab_tech, tab_risk, tab_mkt, tab_models, tab_sig, tab_news, tab_about = 
 with tab_fc:
     ctrl, chart_col = st.columns([1, 3])
     with ctrl:
-        model_opt    = st.selectbox("Forecast model", ["Linear Regression", "One-Step LSTM", "Seq2Seq LSTM"])
+        model_opt    = st.selectbox("Forecast model", ["One-Step LSTM", "Seq2Seq LSTM"])
         n_days       = st.slider("Horizon (days)", 1, 30, 7)
         if model_opt == "Seq2Seq LSTM" and n_days != 7:
             st.info("Seq2Seq is trained for 7-day output — setting to 7.")
@@ -836,9 +1025,7 @@ with tab_fc:
         context_days = st.slider("Historical context (days)", 30, 120, 60)
 
     with st.spinner("Running forecast…"):
-        if model_opt == "Linear Regression":
-            mu, lo, hi = forecast_lr(df, n_days)
-        elif model_opt == "One-Step LSTM":
+        if model_opt == "One-Step LSTM":
             mu, lo, hi = forecast_lstm(df, SEQ_LEN, n_days)
         else:
             mu, lo, hi = forecast_seq2seq(df, SEQ_LEN, n_days)
@@ -924,22 +1111,22 @@ with tab_tech:
     period_map = {"1 Month": 21, "3 Months": 63, "6 Months": 126, "1 Year": 252, "2 Years": 504}
     dv = df.iloc[-period_map[period_opt]:]
 
-    st.markdown(_sec("Price · Moving Averages · Bollinger Bands"), unsafe_allow_html=True)
+    st.markdown(_sec("Price · Candlestick · VWAP"), unsafe_allow_html=True)
+    # VWAP
+    dv = dv.copy()
+    dv["VWAP"] = (dv["Close"] * dv["Volume"]).cumsum() / dv["Volume"].cumsum()
     fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["Close"], name="Close", line=dict(color="#5c6bc0", width=2)))
-    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["MA7"],   name="MA 7",  line=dict(color="#ffb300", width=1.2)))
-    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["MA30"],  name="MA 30", line=dict(color="#ef5350", width=1.2)))
-    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["MA90"],  name="MA 90", line=dict(color="#ab47bc", width=1.2)))
-    fig_price.add_trace(go.Scatter(
-        x=list(dv.index) + list(dv.index[::-1]),
-        y=list(dv["BB_upper"]) + list(dv["BB_lower"][::-1]),
-        fill="toself", fillcolor="rgba(92,107,192,0.08)",
-        line=dict(color="rgba(0,0,0,0)"), name="Bollinger Bands"
+    fig_price.add_trace(go.Candlestick(
+        x=dv.index, open=dv["Open"], high=dv["High"], low=dv["Low"], close=dv["Close"],
+        name="OHLC",
+        increasing=dict(line=dict(color="#10b981"), fillcolor="rgba(16,185,129,0.3)"),
+        decreasing=dict(line=dict(color="#ef4444"), fillcolor="rgba(239,68,68,0.3)"),
     ))
-    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["BB_upper"], name="BB Upper", line=dict(color="#5c6bc0", dash="dot", width=1)))
-    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["BB_lower"], name="BB Lower", line=dict(color="#5c6bc0", dash="dot", width=1)))
-    _c(fig_price)
-    fig_price.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
+    fig_price.add_trace(go.Scatter(x=dv.index, y=dv["VWAP"], name="VWAP",
+                                    line=dict(color="#f59e0b", width=1.5, dash="dot")))
+    _c(fig_price, height=420)
+    fig_price.update_layout(xaxis_title="Date", yaxis_title="Price (USD)",
+                             xaxis_rangeslider_visible=False)
     st.plotly_chart(fig_price, use_container_width=True)
 
     col_rsi, col_macd = st.columns(2)
@@ -985,27 +1172,6 @@ with tab_tech:
     _c(fig_vol)
     fig_vol.update_layout(yaxis_title="Shares")
     st.plotly_chart(fig_vol, use_container_width=True)
-
-    st.markdown(_sec("Return Autocorrelation · ACF"), unsafe_allow_html=True)
-    st.caption("Tests serial dependence in returns — efficient market hypothesis check.")
-    rets_clean = dv["Returns"].dropna().values
-    max_lag    = 30
-    acf_vals   = [pd.Series(rets_clean).autocorr(lag=i) for i in range(1, max_lag + 1)]
-    conf_bound = 1.96 / np.sqrt(len(rets_clean))
-    fig_acf = go.Figure()
-    fig_acf.add_trace(go.Bar(x=list(range(1, max_lag + 1)), y=acf_vals,
-                              marker_color=["#ef5350" if abs(v) > conf_bound else "#5c6bc0" for v in acf_vals],
-                              name="ACF"))
-    fig_acf.add_hline(y=conf_bound,  line_dash="dash", line_color="#ffb300", annotation_text="95% CI")
-    fig_acf.add_hline(y=-conf_bound, line_dash="dash", line_color="#ffb300")
-    _c(fig_acf)
-    fig_acf.update_layout(xaxis_title="Lag (days)", yaxis_title="Autocorrelation")
-    st.plotly_chart(fig_acf, use_container_width=True)
-    sig_lags = [i+1 for i, v in enumerate(acf_vals) if abs(v) > conf_bound]
-    if sig_lags:
-        st.markdown(_sig(f"Significant autocorrelation at lags {sig_lags} — returns show serial dependence, suggesting partial predictability.", "warn"), unsafe_allow_html=True)
-    else:
-        st.markdown(_sig("No significant autocorrelation detected — consistent with the Efficient Market Hypothesis."), unsafe_allow_html=True)
 
     st.markdown(_sec("RSI Strategy vs Buy &amp; Hold · Backtest", "teal"), unsafe_allow_html=True)
     bt       = backtest_rsi(dv)
@@ -1237,140 +1403,145 @@ with tab_mkt:
             fig_rc.update_layout(yaxis_title="Correlation", yaxis=dict(range=[-1, 1]))
             st.plotly_chart(fig_rc, use_container_width=True)
 
+        # ── Cointegration & Pair Trading ──────────────────────────────────────
+        st.markdown(_sec("Cointegration & Pair Trading · Engle-Granger Test", "purple"), unsafe_allow_html=True)
+        st.caption("Tests whether AMZN and each peer share a long-run equilibrium. A stationary spread enables mean-reversion pair trading.")
+        with st.spinner("Running cointegration tests…"):
+            coint_results = run_cointegration(peers_df)
+
+        if coint_results:
+            coint_display = [{k: v for k, v in r.items() if not k.startswith("_")}
+                              for r in coint_results]
+            coint_df = pd.DataFrame(coint_display)
+            st.dataframe(
+                coint_df.style.map(
+                    lambda v: "color:#10b981;font-weight:700" if v == "✅ YES" else
+                              ("color:#ef4444" if v == "❌ NO" else ""),
+                    subset=["Cointegrated"]
+                ),
+                use_container_width=True, hide_index=True
+            )
+
+            # Plot spread for the most cointegrated pair
+            best = min(coint_results, key=lambda x: x["Coint p-val"])
+            spread = best["_spread"]
+            z_spread = (spread - spread.mean()) / spread.std()
+            fig_sp = go.Figure()
+            fig_sp.add_trace(go.Scatter(x=z_spread.index, y=z_spread,
+                                         line=dict(color="#5c6bc0", width=1.5), name=f"Spread Z-Score (AMZN/{best['_ticker']})"))
+            fig_sp.add_hline(y=2,  line_dash="dash", line_color="#ef4444", annotation_text="+2σ Entry Short")
+            fig_sp.add_hline(y=-2, line_dash="dash", line_color="#10b981", annotation_text="-2σ Entry Long")
+            fig_sp.add_hline(y=0,  line_dash="dot",  line_color="#7d93b8")
+            fig_sp.add_hrect(y0=-2, y1=2, fillcolor="rgba(59,130,246,0.04)", line_width=0)
+            _c(fig_sp)
+            fig_sp.update_layout(yaxis_title="Z-Score of Spread")
+            st.plotly_chart(fig_sp, use_container_width=True)
+
+            coint_flag = best["Coint p-val"] < 0.05
+            cv = "bull" if coint_flag else "warn"
+            st.markdown(_sig(
+                f"Best pair: <strong>AMZN/{best['_ticker']}</strong> — Cointegration p-value: <strong>{best['Coint p-val']:.4f}</strong>, "
+                f"Hedge ratio: <strong>{best['Hedge Ratio']}</strong>, Spread half-life: <strong>{best['Half-Life']}</strong>. "
+                f"{'Statistically cointegrated — spread is mean-reverting, enabling pair trade signals.' if coint_flag else 'Not cointegrated at 5% — no reliable long-run equilibrium.'}", cv
+            ), unsafe_allow_html=True)
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — MODEL PERFORMANCE
+# TAB 5 — WALK-FORWARD VALIDATION + XGBOOST
 # ═══════════════════════════════════════════════════════════════════════════════
-with tab_models:
-    st.markdown(_sec("Out-of-Sample Evaluation · 80 / 20 Train-Test Split", "teal"), unsafe_allow_html=True)
-    st.caption("All metrics computed on held-out 20% test set — data never seen during training.")
+with tab_wf:
+    st.markdown(_sec("Walk-Forward Validation · Rolling 252-Day Train / 21-Day Step", "teal"), unsafe_allow_html=True)
+    st.caption("Realistic simulation of live deployment — model refitted on each expanding window, never sees future data.")
 
-    split    = int(len(df) * 0.8)
-    df_train = df.iloc[:split]
-    df_test  = df.iloc[split:]
+    with st.spinner("Running walk-forward validation (LR + XGBoost)…"):
+        wf_dates, wf_actual, wf_lr, wf_xgb = walk_forward_validation(df)
 
-    # LR test predictions
-    df_all      = df.copy()
-    df_all["ord"] = df_all.index.map(pd.Timestamp.toordinal)
-    lr_mdl      = LinearRegression().fit(
-        df_all["ord"].iloc[:split].values.reshape(-1, 1),
-        df_all["Close"].iloc[:split].values
-    )
-    lr_pred_test = lr_mdl.predict(df_all["ord"].iloc[split:].values.reshape(-1, 1))
+    if len(wf_dates) > 0:
+        wf1, wf2, wf3, wf4 = st.columns(4)
+        wf1.metric("LR RMSE ($)",   f"{np.sqrt(mean_squared_error(wf_actual, wf_lr)):.2f}")
+        wf2.metric("XGB RMSE ($)",  f"{np.sqrt(mean_squared_error(wf_actual, wf_xgb)):.2f}")
+        wf3.metric("LR MAPE (%)",   f"{mape(wf_actual, wf_lr):.2f}")
+        wf4.metric("XGB MAPE (%)",  f"{mape(wf_actual, wf_xgb):.2f}")
 
-    # LSTM test predictions
-    feats       = df[["Open", "High", "Low", "Close", "Volume"]].values
-    scaler_lstm = MinMaxScaler().fit(feats[:split])
-    norm_lstm   = scaler_lstm.transform(feats)
-    lstm_mdl    = OneStepLSTM(inp_size=5).cpu()
-    lstm_mdl.load_state_dict(torch.load("amazon_lstm_model.pth", map_location="cpu", weights_only=False))
-    lstm_mdl.eval()
-    X_lstm, y_lstm = make_multi_sequences(norm_lstm, seq_len=SEQ_LEN, horizon=1)
-    with torch.no_grad():
-        ph_lstm = lstm_mdl(X_lstm.float()).numpy().flatten()
-    dummy4      = np.zeros((len(ph_lstm), 4))
-    inv_lstm    = scaler_lstm.inverse_transform(np.hstack([dummy4, ph_lstm.reshape(-1, 1)]))[:, -1]
-    inv_y_lst   = scaler_lstm.inverse_transform(np.hstack([dummy4, y_lstm.numpy().reshape(-1, 1)]))[:, -1]
-    _n_lstm      = min(len(inv_lstm), len(inv_y_lst), len(df) - SEQ_LEN)
-    inv_lstm     = inv_lstm[:_n_lstm]
-    inv_y_lst    = inv_y_lst[:_n_lstm]
-    idx_lstm     = df.index[SEQ_LEN: SEQ_LEN + _n_lstm]
-    test_mask_lstm = np.array(idx_lstm >= df_test.index[0])
+        fig_wf = go.Figure()
+        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_actual, name="Actual",
+                                     line=dict(color="#d8e3f5", width=2)))
+        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_lr, name="LR (Walk-Fwd)",
+                                     line=dict(color="#f59e0b", width=1.5, dash="dot")))
+        fig_wf.add_trace(go.Scatter(x=wf_dates, y=wf_xgb, name="XGBoost (Walk-Fwd)",
+                                     line=dict(color="#10b981", width=1.5, dash="dot")))
+        _c(fig_wf, legend_h=True)
+        fig_wf.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
+        st.plotly_chart(fig_wf, use_container_width=True)
 
-    # Seq2Seq test predictions
-    closes_all  = df[["Close"]].values
-    scaler_seq  = MinMaxScaler().fit(closes_all[:split])
-    norm_seq    = scaler_seq.transform(closes_all)
-    X_seq, y_seq = make_multi_sequences(norm_seq, seq_len=SEQ_LEN, horizon=1)
-    seq_mdl     = Seq2SeqLSTM(input_dim=1).cpu()
-    seq_mdl.load_state_dict(torch.load("seq2seq_lstm.pth", map_location="cpu", weights_only=False))
-    seq_mdl.eval()
-    with torch.no_grad():
-        ph_seq = seq_mdl(X_seq.float()).numpy().flatten()
-    inv_seq     = scaler_seq.inverse_transform(ph_seq.reshape(-1, 1)).flatten()
-    inv_y_seq   = scaler_seq.inverse_transform(y_seq.numpy().reshape(-1, 1)).flatten()
-    _n_seq       = min(len(inv_seq), len(inv_y_seq), len(df) - SEQ_LEN)
-    inv_seq      = inv_seq[:_n_seq]
-    inv_y_seq    = inv_y_seq[:_n_seq]
-    idx_seq      = df.index[SEQ_LEN: SEQ_LEN + _n_seq]
-    test_mask_seq = np.array(idx_seq >= df_test.index[0])
+        # Rolling RMSE by window
+        st.markdown(_sec("Rolling Window RMSE · 63-Day Rolling Error", "amber"), unsafe_allow_html=True)
+        wf_df_tmp = pd.DataFrame({"actual": wf_actual, "lr": wf_lr, "xgb": wf_xgb}, index=pd.to_datetime(wf_dates))
+        wf_df_tmp["lr_err2"]  = (wf_df_tmp["actual"] - wf_df_tmp["lr"])**2
+        wf_df_tmp["xgb_err2"] = (wf_df_tmp["actual"] - wf_df_tmp["xgb"])**2
+        roll_rmse_lr  = wf_df_tmp["lr_err2"].rolling(63).mean().apply(np.sqrt)
+        roll_rmse_xgb = wf_df_tmp["xgb_err2"].rolling(63).mean().apply(np.sqrt)
+        fig_rrmse = go.Figure()
+        fig_rrmse.add_trace(go.Scatter(x=roll_rmse_lr.index,  y=roll_rmse_lr,
+                                        name="LR RMSE",  line=dict(color="#f59e0b", width=1.5)))
+        fig_rrmse.add_trace(go.Scatter(x=roll_rmse_xgb.index, y=roll_rmse_xgb,
+                                        name="XGB RMSE", line=dict(color="#10b981", width=1.5)))
+        _c(fig_rrmse, legend_h=True)
+        fig_rrmse.update_layout(yaxis_title="RMSE ($)")
+        st.plotly_chart(fig_rrmse, use_container_width=True)
 
-    def metrics(actual, pred):
-        n   = min(len(actual), len(pred))
-        a, p = actual[:n], pred[:n]
-        return (np.sqrt(mean_squared_error(a, p)),
-                np.mean(np.abs(a - p)),
-                mape(a, p),
-                r2_score(a, p), n)
+        better = "XGBoost" if mape(wf_actual, wf_xgb) < mape(wf_actual, wf_lr) else "Linear Regression"
+        st.markdown(_sig(
+            f"<strong>{better}</strong> achieves lower MAPE across all walk-forward windows. "
+            f"Walk-forward validation is more rigorous than a single train-test split — it simulates "
+            f"how a model would perform in live production with periodic retraining.", "bull"
+        ), unsafe_allow_html=True)
 
-    act_lr = df_test["Close"].values
-    pr_lr  = lr_pred_test
-    pr_ls  = inv_lstm[test_mask_lstm]
-    act_ls = inv_y_lst[test_mask_lstm]
-    pr_sq  = inv_seq[test_mask_seq]
-    act_sq = inv_y_seq[test_mask_seq]
+    # ── XGBoost with RandomizedSearchCV ──────────────────────────────────────
+    st.markdown(_sec("XGBoost · RandomizedSearchCV Hyperparameter Tuning", "blue"), unsafe_allow_html=True)
+    st.caption("30 iterations · 5-fold CV · optimised for RMSE · 11 features including technical indicators")
 
-    rows = []
-    for name, act, pred in [("Linear Regression", act_lr, pr_lr),
-                              ("One-Step LSTM",     act_ls, pr_ls),
-                              ("Seq2Seq LSTM",      act_sq, pr_sq)]:
-        rm_v, ma_v, mp_v, r2_v, n_v = metrics(act, pred)
-        rows.append({"Model": name, "RMSE ($)": rm_v, "MAE ($)": ma_v, "MAPE (%)": mp_v, "R²": r2_v, "Test n": n_v})
+    with st.spinner("Training XGBoost with RandomizedSearchCV (30 iters × 5 folds)…"):
+        xgb_model, best_params, xgb_rmse, xgb_mape, xgb_r2, xgb_fi, xgb_idx, xgb_actual, xgb_pred = train_xgboost(df)
 
-    metrics_df = pd.DataFrame(rows)
-    st.dataframe(
-        metrics_df.style
-            .format({"RMSE ($)": "{:.2f}", "MAE ($)": "{:.2f}", "MAPE (%)": "{:.2f}", "R²": "{:.4f}"})
-            .highlight_min(subset=["RMSE ($)", "MAE ($)", "MAPE (%)"], color="#1e3a2f")
-            .highlight_max(subset=["R²"], color="#1e3a2f"),
-        use_container_width=True, hide_index=True,
-    )
+    x1, x2, x3 = st.columns(3)
+    x1.metric("XGBoost RMSE ($)", f"{xgb_rmse:.2f}")
+    x2.metric("XGBoost MAPE (%)", f"{xgb_mape:.2f}")
+    x3.metric("XGBoost R²",       f"{xgb_r2:.4f}")
 
-    best_model = metrics_df.loc[metrics_df["RMSE ($)"].idxmin(), "Model"]
-    st.markdown(_sig(f"<strong>{best_model}</strong> achieves the lowest RMSE on the held-out test set.", "bull"), unsafe_allow_html=True)
+    # Best hyperparameters
+    params_html = "".join([
+        f'<tr><td style="padding:6px 14px;font-family:\'Space Mono\',monospace;font-size:0.7rem;color:#7d93b8;border-bottom:1px solid #192540">{k}</td>'
+        f'<td style="padding:6px 14px;font-family:\'Space Mono\',monospace;font-size:0.7rem;color:#d8e3f5;border-bottom:1px solid #192540;text-align:right">{v}</td></tr>'
+        for k, v in best_params.items()
+    ])
+    st.markdown(f"""
+    <div style="margin:12px 0">
+      <div style="font-family:'Space Mono',monospace;font-size:0.6rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px">Best Hyperparameters Found</div>
+      <table style="width:50%;border-collapse:collapse;background:#0d1220;border:1px solid #192540;border-radius:3px">
+        <tbody>{params_html}</tbody>
+      </table>
+    </div>""", unsafe_allow_html=True)
 
-    st.markdown(_sec("Predicted vs Actual · Test Period", "blue"), unsafe_allow_html=True)
-    min_lr = min(len(act_lr), len(pr_lr))
-    min_ls = min(len(act_ls), len(pr_ls))
-    min_sq = min(len(act_sq), len(pr_sq))
-    fig_cmp = go.Figure()
-    fig_cmp.add_trace(go.Scatter(x=df_test.index[:min_lr], y=act_lr[:min_lr],
-                                  name="Actual", line=dict(color="#eef0f8", width=2)))
-    fig_cmp.add_trace(go.Scatter(x=df_test.index[:min_lr], y=pr_lr[:min_lr],
-                                  name="Linear Regression", line=dict(color="#ffb300", width=1.5, dash="dot")))
-    fig_cmp.add_trace(go.Scatter(x=idx_lstm[test_mask_lstm][:min_ls], y=pr_ls[:min_ls],
-                                  name="One-Step LSTM", line=dict(color="#26a69a", width=1.5, dash="dot")))
-    fig_cmp.add_trace(go.Scatter(x=idx_seq[test_mask_seq][:min_sq], y=pr_sq[:min_sq],
-                                  name="Seq2Seq LSTM", line=dict(color="#5c6bc0", width=1.5, dash="dot")))
-    _c(fig_cmp, legend_h=True)
-    fig_cmp.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
-    st.plotly_chart(fig_cmp, use_container_width=True)
+    # Test predictions chart
+    fig_xgb = go.Figure()
+    fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_actual, name="Actual",
+                                  line=dict(color="#d8e3f5", width=2)))
+    fig_xgb.add_trace(go.Scatter(x=xgb_idx, y=xgb_pred,   name="XGBoost",
+                                  line=dict(color="#10b981", width=1.5, dash="dot")))
+    _c(fig_xgb, legend_h=True)
+    fig_xgb.update_layout(xaxis_title="Date", yaxis_title="Price (USD)")
+    st.plotly_chart(fig_xgb, use_container_width=True)
 
-    st.markdown(_sec("Residual Analysis · Test Period"), unsafe_allow_html=True)
-    fig_res = go.Figure()
-    fig_res.add_trace(go.Scatter(x=df_test.index[:min_lr],
-                                  y=(act_lr[:min_lr] - pr_lr[:min_lr]),
-                                  name="LR Residuals", line=dict(color="#ffb300")))
-    fig_res.add_trace(go.Scatter(x=idx_lstm[test_mask_lstm][:min_ls],
-                                  y=(act_ls[:min_ls] - pr_ls[:min_ls]),
-                                  name="LSTM Residuals", line=dict(color="#26a69a")))
-    fig_res.add_hline(y=0, line_dash="dash", line_color="#7b8ab8")
-    _c(fig_res, legend_h=True)
-    fig_res.update_layout(yaxis_title="Residual ($)")
-    st.plotly_chart(fig_res, use_container_width=True)
-
-    st.markdown(_sec("Feature Importance · Random Forest · Next-Day Close", "amber"), unsafe_allow_html=True)
-    st.caption("200 trees · Mean decrease in impurity · All available data")
-    with st.spinner("Training Random Forest for feature importance…"):
-        fi = compute_feature_importance(df)
-    fig_fi = go.Figure(go.Bar(
-        x=fi.values, y=fi.index, orientation="h",
-        marker_color=px.colors.sequential.Plasma_r[:len(fi)],
+    # Feature importance
+    st.markdown(_sec("XGBoost Feature Importance", "teal"), unsafe_allow_html=True)
+    fig_xfi = go.Figure(go.Bar(
+        x=xgb_fi.values, y=xgb_fi.index, orientation="h",
+        marker_color=px.colors.sequential.Viridis[:len(xgb_fi)],
     ))
-    _c(fig_fi, height=350)
-    fig_fi.update_layout(xaxis_title="Importance")
-    st.plotly_chart(fig_fi, use_container_width=True)
-    top_feat = fi.index[-1]
-    st.markdown(_sig(f"<strong>{top_feat}</strong> is the top predictive feature for next-day closing price per the Random Forest model.", "bull"), unsafe_allow_html=True)
+    _c(fig_xfi, height=360)
+    fig_xfi.update_layout(xaxis_title="Importance (Gain)")
+    st.plotly_chart(fig_xfi, use_container_width=True)
+    st.markdown(_sig(f"<strong>{xgb_fi.index[-1]}</strong> is the highest-gain feature in the tuned XGBoost model. RandomizedSearchCV explored {30 * 5} model configurations to find the optimal hyperparameter set.", "bull"), unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 6 — SIGNALS & ANOMALIES
@@ -1540,44 +1711,156 @@ with tab_sig:
         pnl_var
     ), unsafe_allow_html=True)
 
+    # ── Options Greeks (Black-Scholes) ────────────────────────────────────────
+    st.markdown(_sec("Options Pricing · Black-Scholes Model & Greeks", "amber"), unsafe_allow_html=True)
+    st.caption("European option pricing with all five Greeks — Delta, Gamma, Theta, Vega, Rho.")
+    og1, og2, og3, og4, og5 = st.columns(5)
+    S_bs   = df["Close"].iloc[-1]
+    K_bs   = og1.number_input("Strike (K)", value=round(S_bs), step=5.0)
+    T_bs   = og2.number_input("Days to Expiry", value=30, min_value=1, max_value=365) / 365
+    r_bs   = og3.number_input("Risk-Free Rate (%)", value=5.0, step=0.25) / 100
+    sig_bs = og4.number_input("IV / Vol (%)", value=float(f"{df['Volatility'].iloc[-1]:.1f}"), step=1.0) / 100
+    opt_t  = og5.selectbox("Type", ["call", "put"])
+
+    price_bs, delta, gamma, theta, vega, rho = black_scholes(S_bs, K_bs, T_bs, r_bs, sig_bs, opt_t)
+
+    greek_cols = st.columns(6)
+    greek_data = [
+        ("Option Price", f"${price_bs:.4f}", ""),
+        ("Delta Δ",      f"{delta:.4f}",     "Sensitivity to ΔS"),
+        ("Gamma Γ",      f"{gamma:.6f}",     "Rate of change of Δ"),
+        ("Theta Θ",      f"${theta:.4f}/day","Time decay"),
+        ("Vega V",       f"${vega:.4f}/%",   "Sensitivity to Δvol"),
+        ("Rho ρ",        f"${rho:.4f}/%",    "Sensitivity to Δr"),
+    ]
+    for col, (name, val, sub) in zip(greek_cols, greek_data):
+        col.markdown(f"""
+        <div style="background:#0d1220;border:1px solid #192540;border-radius:3px;padding:12px 10px;text-align:center">
+          <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:#3d5070;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px">{name}</div>
+          <div style="font-family:'Space Mono',monospace;font-size:1.1rem;color:#d8e3f5;font-weight:700">{val}</div>
+          <div style="font-family:'Space Mono',monospace;font-size:0.55rem;color:#3d5070;margin-top:4px">{sub}</div>
+        </div>""", unsafe_allow_html=True)
+
+    # IV surface: price across strikes
+    st.markdown(_sec("Option Price Surface · Strike vs IV", "blue"), unsafe_allow_html=True)
+    strikes_range = np.linspace(S_bs * 0.7, S_bs * 1.3, 30)
+    iv_range      = np.linspace(0.10, 0.70, 20)
+    Z_surf = np.array([[black_scholes(S_bs, k, T_bs, r_bs, iv, opt_t)[0]
+                         for k in strikes_range] for iv in iv_range])
+    fig_surf = go.Figure(go.Surface(
+        x=strikes_range, y=iv_range * 100, z=Z_surf,
+        colorscale="Viridis", opacity=0.85,
+        contours=dict(z=dict(show=True, usecolormap=True, highlightcolor="#10b981", project_z=True))
+    ))
+    fig_surf.update_layout(
+        scene=dict(
+            xaxis=dict(title="Strike ($)", backgroundcolor="#05080f", gridcolor="#192540",
+                       tickfont=dict(color="#3d5070", size=9)),
+            yaxis=dict(title="IV (%)",    backgroundcolor="#05080f", gridcolor="#192540",
+                       tickfont=dict(color="#3d5070", size=9)),
+            zaxis=dict(title="Option Price ($)", backgroundcolor="#05080f", gridcolor="#192540",
+                       tickfont=dict(color="#3d5070", size=9)),
+            bgcolor="#05080f",
+        ),
+        paper_bgcolor="#05080f", font=dict(color="#7d93b8", family="Space Mono, monospace"),
+        margin=dict(l=0, r=0, t=20, b=0), height=460,
+    )
+    st.plotly_chart(fig_surf, use_container_width=True)
+    moneyness = "IN-THE-MONEY" if (S_bs > K_bs and opt_t == "call") or (S_bs < K_bs and opt_t == "put") else "OUT-OF-THE-MONEY" if (S_bs < K_bs and opt_t == "call") or (S_bs > K_bs and opt_t == "put") else "AT-THE-MONEY"
+    st.markdown(_sig(
+        f"{opt_t.upper()} option — S=${S_bs:.2f}, K=${K_bs:.2f} → <strong>{moneyness}</strong>. "
+        f"Delta <strong>{delta:.4f}</strong> means a $1 move in AMZN → ~${abs(delta)*shares:.2f} P&amp;L on {shares:.0f} shares. "
+        f"Theta <strong>${theta:.4f}/day</strong> — time decay cost per day held.",
+        "bull" if moneyness == "IN-THE-MONEY" else "warn"
+    ), unsafe_allow_html=True)
+
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 7 — NEWS & SENTIMENT
+# TAB 7 — NEWS & SENTIMENT (FinBERT)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_news:
+    st.markdown(_sec("News Sentiment · FinBERT · Financial Domain NLP", "teal"), unsafe_allow_html=True)
+    st.caption("ProsusAI/FinBERT — BERT fine-tuned on 10,000+ financial news articles. Far more accurate than general-purpose NLP for financial text.")
+
     if not news:
         st.info("No recent AMZN news articles found.")
     else:
-        scores    = [TextBlob(e.title).sentiment.polarity for e in news[:15]]
-        avg_sent  = np.mean(scores)
-        sent_label = "Positive 🟢" if avg_sent > 0.05 else "Negative 🔴" if avg_sent < -0.05 else "Neutral 🟡"
-        sent_color = "#26a69a" if avg_sent > 0.05 else "#ef5350" if avg_sent < -0.05 else "#ffb300"
+        with st.spinner("Running FinBERT inference on headlines…"):
+            try:
+                finbert_pipe = load_finbert()
+                fb_results   = finbert_sentiment(finbert_pipe, [e.title for e in news[:15]])
+                fb_labels    = [r[0] for r in fb_results]
+                fb_scores    = [r[1] for r in fb_results]
+                model_name   = "FinBERT"
+            except Exception:
+                # Graceful fallback if transformers unavailable
+                from textblob import TextBlob
+                fb_labels = []
+                fb_scores = []
+                for e in news[:15]:
+                    p = TextBlob(e.title).sentiment.polarity
+                    fb_scores.append(p)
+                    fb_labels.append("positive" if p > 0.05 else "negative" if p < -0.05 else "neutral")
+                model_name = "TextBlob (fallback)"
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Articles Analysed", len(news[:15]))
-        m2.metric("Avg Sentiment Score", f"{avg_sent:+.3f}")
-        m3.metric("Overall Signal", sent_label)
+        pos_count  = fb_labels.count("positive")
+        neg_count  = fb_labels.count("negative")
+        neu_count  = fb_labels.count("neutral")
+        avg_pol    = np.mean(fb_scores)
+        overall_lb = "Positive" if avg_pol > 0.05 else "Negative" if avg_pol < -0.05 else "Neutral"
+        sent_color = "#10b981" if avg_pol > 0.05 else "#ef4444" if avg_pol < -0.05 else "#f59e0b"
 
-        st.markdown(f'<div class="insight">Overall news sentiment is <strong style="color:{sent_color}">{sent_label}</strong> ({avg_sent:+.3f}). Polarity derived from TextBlob NLP on headline text.</div>', unsafe_allow_html=True)
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Model", model_name)
+        m2.metric("Articles", len(news[:15]))
+        m3.metric("🟢 Positive", pos_count)
+        m4.metric("🔴 Negative", neg_count)
+        m5.metric("Overall", overall_lb)
 
-        titles_short = [e.title[:55] + "…" if len(e.title) > 55 else e.title for e in news[:10]]
-        fig_sent = go.Figure(go.Bar(
-            x=scores[:10], y=titles_short, orientation="h",
-            marker_color=["#26a69a" if s > 0.05 else "#ef5350" if s < -0.05 else "#ffb300" for s in scores[:10]],
-        ))
-        fig_sent.add_vline(x=0, line_dash="dash", line_color="#7b8ab8")
-        _c(fig_sent, height=340)
-        fig_sent.update_layout(xaxis_title="Sentiment Polarity")
-        st.plotly_chart(fig_sent, use_container_width=True)
+        sv = "bull" if avg_pol > 0.05 else "bear" if avg_pol < -0.05 else ""
+        st.markdown(_sig(
+            f"<strong>{model_name}</strong> classifies <strong>{pos_count} positive</strong>, "
+            f"<strong>{neg_count} negative</strong>, <strong>{neu_count} neutral</strong> headlines. "
+            f"Aggregate sentiment: <strong style='color:{sent_color}'>{overall_lb}</strong> (mean polarity {avg_pol:+.3f}).",
+            sv
+        ), unsafe_allow_html=True)
 
-        filt = st.selectbox("Filter", ["All", "Positive", "Neutral", "Negative"])
+        # Sentiment distribution donut
+        dc, bc = st.columns([1, 2])
+        with dc:
+            fig_pie = go.Figure(go.Pie(
+                labels=["Positive", "Negative", "Neutral"],
+                values=[pos_count, neg_count, neu_count],
+                hole=0.6,
+                marker=dict(colors=["#10b981", "#ef4444", "#f59e0b"]),
+                textfont=dict(family="Space Mono, monospace", size=10, color="#d8e3f5"),
+            ))
+            fig_pie.update_traces(hovertemplate="%{label}: %{value} articles")
+            _c(fig_pie, height=220)
+            fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=10, b=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+        with bc:
+            titles_short = [e.title[:60] + "…" if len(e.title) > 60 else e.title for e in news[:10]]
+            fig_sent = go.Figure(go.Bar(
+                x=fb_scores[:10], y=titles_short, orientation="h",
+                marker_color=["#10b981" if s > 0.05 else "#ef4444" if s < -0.05 else "#f59e0b"
+                               for s in fb_scores[:10]],
+            ))
+            fig_sent.add_vline(x=0, line_dash="dash", line_color="#7b8ab8")
+            _c(fig_sent, height=330)
+            fig_sent.update_layout(xaxis_title="FinBERT Polarity Score")
+            st.plotly_chart(fig_sent, use_container_width=True)
+
+        filt = st.selectbox("Filter articles", ["All", "Positive", "Neutral", "Negative"])
         st.markdown("---")
-        for entry, score in zip(news[:15], scores):
-            if filt == "Positive" and score <= 0.05: continue
-            if filt == "Negative" and score >= -0.05: continue
-            if filt == "Neutral"  and abs(score) > 0.05: continue
-            badge = "🟢 Positive" if score > 0.05 else "🔴 Negative" if score < -0.05 else "🟡 Neutral"
+        for entry, label, score in zip(news[:15], fb_labels, fb_scores):
+            if filt == "Positive" and label != "positive": continue
+            if filt == "Negative" and label != "negative": continue
+            if filt == "Neutral"  and label != "neutral":  continue
+            badge = "🟢 Positive" if label == "positive" else "🔴 Negative" if label == "negative" else "🟡 Neutral"
+            col_badge = "#10b981" if label == "positive" else "#ef4444" if label == "negative" else "#f59e0b"
             st.markdown(f"**[{entry.title}]({entry.link})**")
-            st.caption(f"{badge}  ·  Score: {score:+.3f}  ·  {entry.get('published', '')}")
+            st.caption(f"<span style='color:{col_badge}'>{badge}</span>  ·  FinBERT score: {score:+.4f}  ·  {entry.get('published', '')}", unsafe_allow_html=True)
             st.markdown(f"{entry.get('summary', '')[:220]}…")
             st.markdown("---")
 

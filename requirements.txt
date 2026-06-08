@@ -4,10 +4,10 @@ streamlit>=1.31
 plotly
 ta
 feedparser
-textblob
 scikit-learn
 numpy
 pandas
 scipy
 statsmodels
 xgboost
+transformers
