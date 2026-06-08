@@ -1307,6 +1307,7 @@ with tab_risk:
 # TAB 4 — MARKET CONTEXT
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_mkt:
+    st.write("✅ Market Context tab is rendering")
     # ── AMZN-only sections (instant, no network) ──────────────────────────────
     st.markdown(_sec("AMZN Return Metrics · Multi-Period"), unsafe_allow_html=True)
 
@@ -1447,6 +1448,7 @@ with tab_mkt:
 # TAB 5 — WALK-FORWARD VALIDATION + XGBOOST
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_wf:
+    st.write("✅ Walk-Forward tab is rendering")
     st.markdown(_sec("Walk-Forward Validation · Rolling 252-Day Train / 21-Day Step", "teal"), unsafe_allow_html=True)
     st.caption("Realistic simulation of live deployment — model refitted on each expanding window, never sees future data.")
 
@@ -1562,7 +1564,7 @@ with tab_wf:
 # TAB 6 — SIGNALS & ANOMALIES
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_sig:
-
+    st.write("✅ Signals tab is rendering")
     # ── Signal Scorecard ──────────────────────────────────────────────────────
     st.markdown(_sec("Technical Signal Scorecard · All Indicators"), unsafe_allow_html=True)
     sigs = signal_scorecard(df)
@@ -1793,6 +1795,7 @@ with tab_sig:
 # TAB 7 — NEWS & SENTIMENT (FinBERT)
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_news:
+    st.write("✅ News tab is rendering")
     st.markdown(_sec("News Sentiment · FinBERT · Financial Domain NLP", "teal"), unsafe_allow_html=True)
     st.caption("ProsusAI/FinBERT — BERT fine-tuned on 10,000+ financial news articles. Far more accurate than general-purpose NLP for financial text.")
 
