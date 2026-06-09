@@ -1,6 +1,6 @@
 # AMZN Stock Forecasting & Analytics Dashboard
 
-> An end-to-end machine learning pipeline that benchmarks four forecasting approaches on Amazon (AMZN) price data, deployed as an interactive dashboard.
+> An end-to-end machine learning pipeline that benchmarks four forecasting approaches on 7,300+ days of Amazon (AMZN) price data, with walk-forward validation, SHAP interpretability, and statistical signal backtesting — deployed as an interactive dashboard.
 
 <p align="center">
   <a href="https://amazonstock-dashboard.streamlit.app/">
@@ -30,11 +30,11 @@ Stock price forecasting is a hard time-series problem — prices are non-station
 
 ### Data
 - Source: Yahoo Finance via `yfinance`, with a local CSV fallback to handle API rate limits on cloud deployments
-- ~5 years of daily OHLCV data for AMZN
-- Train/test split: strictly chronological 80/20 — no shuffling, no future data leakage
+- **7,300+ days** of daily OHLCV data for AMZN (auto-refreshed daily via GitHub Actions)
+- Train/test split: strictly **chronological 80/20** — no shuffling, no future data leakage
 
 ### Feature Engineering
-Built 10+ technical features from raw OHLCV:
+Built **11 technical features** from raw OHLCV:
 
 | Feature | Description |
 |---|---|
@@ -57,7 +57,9 @@ Built 10+ technical features from raw OHLCV:
 
 ### Evaluation
 - Metrics: RMSE, MAPE, R²
-- Walk-forward validation on XGBoost to simulate real deployment conditions (rolling retrain on expanding window)
+- **Rolling walk-forward validation** (252-day window, 21-day step) across **AMZN, MSFT, and GOOGL** — simulates real deployment with no future leakage
+- **SHAP TreeExplainer** for feature attribution on the XGBoost model (auto-computed on page load)
+- **t-test p-values** on RSI, MACD, and volume signal backtests to separate statistically significant signals from noise
 - Visual actual vs. predicted overlays with strict train/test shading
 
 ---
@@ -96,11 +98,11 @@ A deep learning approach would be more competitive with: tick-level data, cross-
 
 The dashboard also includes supporting analyses that provide context for the forecasts:
 
-- **Risk Analytics** — Sharpe, Sortino, Max Drawdown, VaR 95%/99%, CVaR; return distribution normality testing (Shapiro-Wilk); ACF for autocorrelation structure
-- **Volatility Regime Detection** — 30D vs 90D rolling vol with high-vol period shading; helps contextualise model performance across market regimes
-- **Anomaly Detection** — Z-score rolling window (20-day, ±2.5σ) flags statistically unusual price events
-- **Signal Backtesting** — each technical signal (RSI, MACD, Volume) backtested with t-test p-values and win rates against the unconditional mean return
-- **Feature Correlation** — Pearson correlation of all indicators vs next-day returns; honestly shows near-zero correlations consistent with EMH
+- **Risk Analytics** — Sharpe, Sortino, Max Drawdown, VaR 95%/99%, CVaR; return distribution normality testing (Shapiro-Wilk); ACF for autocorrelation structure; SHAP feature importance
+- **Volatility Regime Detection** — 30D vs 90D rolling vol with high-vol period shading
+- **Z-Score Anomaly Detection** — rolling 20-day window, ±2.5σ threshold flags statistically unusual price events
+- **Signal Backtesting** — RSI, MACD, and volume signals backtested with t-test p-values and win rates vs the unconditional mean return
+- **Feature Correlation** — Pearson correlation of all 11 indicators vs next-day returns; honestly shows near-zero correlations consistent with EMH
 - **News Sentiment** — Live Yahoo Finance RSS feed with FinBERT (transformer-based) sentiment scoring per article
 - **Peer Comparison** — AMZN vs MSFT, GOOGL, META, AAPL, SPY normalised performance and correlation matrix
 
