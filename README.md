@@ -99,8 +99,8 @@ The dashboard also includes supporting analyses that provide context for the for
 - **Risk Analytics** — Sharpe, Sortino, Max Drawdown, VaR 95%/99%, CVaR; return distribution normality testing (Shapiro-Wilk); ACF for autocorrelation structure
 - **Volatility Regime Detection** — 30D vs 90D rolling vol with high-vol period shading; helps contextualise model performance across market regimes
 - **Anomaly Detection** — Z-score rolling window (20-day, ±2.5σ) flags statistically unusual price events
-- **Signal Scorecard** — 7-indicator consensus (RSI, MACD, Bollinger Bands, MA crossover, Volume, Volatility) gives a quick directional read
-- **Monte Carlo Simulation** — 500 GBM paths with P10/P50/P90 fan for probabilistic price range estimation
+- **Signal Backtesting** — each technical signal (RSI, MACD, Volume) backtested with t-test p-values and win rates against the unconditional mean return
+- **Feature Correlation** — Pearson correlation of all indicators vs next-day returns; honestly shows near-zero correlations consistent with EMH
 - **News Sentiment** — Live Yahoo Finance RSS feed with FinBERT (transformer-based) sentiment scoring per article
 - **Peer Comparison** — AMZN vs MSFT, GOOGL, META, AAPL, SPY normalised performance and correlation matrix
 
@@ -176,7 +176,7 @@ App runs at `http://localhost:8501`
 
 | Layer | Technology |
 |---|---|
-| App framework | Streamlit 1.58, custom CSS dark theme |
+| App framework | Streamlit 1.58, custom CSS light theme |
 | Charts | Plotly (fully interactive) |
 | Deep Learning | PyTorch — LSTM, Seq2Seq Encoder-Decoder |
 | Classical ML | scikit-learn — Linear Regression, Random Forest; XGBoost |
