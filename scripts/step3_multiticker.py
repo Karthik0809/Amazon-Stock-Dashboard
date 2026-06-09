@@ -1,4 +1,4 @@
-import os, warnings, sys
+import os, warnings
 os.environ['MPLBACKEND'] = 'Agg'
 import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
@@ -6,7 +6,11 @@ import numpy as np, pandas as pd
 from sklearn.linear_model import LinearRegression
 from xgboost import XGBRegressor
 import yfinance as yf
+import mlflow
 warnings.filterwarnings('ignore')
+
+mlflow.set_tracking_uri("mlruns")
+mlflow.set_experiment("AMZN-Stock-Forecasting")
 
 os.makedirs('notebook_outputs', exist_ok=True)
 print("=== Step 3: Multi-ticker walk-forward ===")
@@ -40,12 +44,12 @@ def walk_forward(tdf, window=252, step=21):
         actuals.extend(te); lr_p.extend(lp); xgb_p.extend(xp)
         idx += step
     a, l, x = np.array(actuals), np.array(lr_p), np.array(xgb_p)
-    return {'LR RMSE': float(np.sqrt(np.mean((a-l)**2))),
+    return {'LR RMSE':  float(np.sqrt(np.mean((a-l)**2))),
             'XGB RMSE': float(np.sqrt(np.mean((a-x)**2))),
-            'LR MAPE': float(np.mean(np.abs((a-l)/(a+1e-9)))*100),
+            'LR MAPE':  float(np.mean(np.abs((a-l)/(a+1e-9)))*100),
             'XGB MAPE': float(np.mean(np.abs((a-x)/(a+1e-9)))*100)}
 
-# AMZN
+# Load AMZN
 df_amzn = pd.read_csv('amazon_stock.csv')
 df_amzn.columns = df_amzn.columns.str.strip().str.lower()
 df_amzn['date'] = pd.to_datetime(df_amzn['date'], utc=True, errors='coerce').dt.tz_localize(None)
@@ -69,6 +73,25 @@ for ticker, tdf in tickers.items():
     r = walk_forward(tdf)
     r['Ticker'] = ticker; rows.append(r)
     print(f"LR={r['LR RMSE']:.2f}  XGB={r['XGB RMSE']:.2f}  XGB wins: {r['XGB RMSE'] < r['LR RMSE']}")
+
+    # Log per-ticker run
+    with mlflow.start_run(run_name=f"WalkForward-{ticker}"):
+        mlflow.set_tag("model_type", "walk_forward")
+        mlflow.set_tag("ticker", ticker)
+        mlflow.log_params({
+            "window_days": 252,
+            "step_days":   21,
+            "ticker":      ticker,
+            "xgb_n_estimators": 80,
+            "xgb_max_depth":    4,
+            "xgb_lr":           0.1,
+        })
+        mlflow.log_metric("lr_rmse",   r['LR RMSE'])
+        mlflow.log_metric("xgb_rmse",  r['XGB RMSE'])
+        mlflow.log_metric("lr_mape",   r['LR MAPE'])
+        mlflow.log_metric("xgb_mape",  r['XGB MAPE'])
+        mlflow.log_metric("xgb_improvement_pct",
+                          (r['LR RMSE'] - r['XGB RMSE']) / r['LR RMSE'] * 100)
 
 mr_df = pd.DataFrame(rows).set_index('Ticker')
 

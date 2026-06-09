@@ -1,4 +1,4 @@
-﻿import torch, torch.nn as nn
+import torch, torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import os, warnings
 os.environ['MPLBACKEND'] = 'Agg'
@@ -7,9 +7,12 @@ import matplotlib.pyplot as plt
 import numpy as np, pandas as pd
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import MinMaxScaler
-import torch, torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+import mlflow
+import mlflow.pytorch
 warnings.filterwarnings('ignore')
+
+mlflow.set_tracking_uri("mlruns")
+mlflow.set_experiment("AMZN-Stock-Forecasting")
 
 os.makedirs('notebook_outputs', exist_ok=True)
 print("=== Step 1: EDA + LR + LSTM ===")
@@ -50,105 +53,147 @@ closes = df_feat['close'].values
 dates  = df_feat.index
 n, split = len(closes), int(len(closes) * 0.8)
 
-# Naive + LR
+# ── Naive baseline ─────────────────────────────────────────────────────────────
 naive_rmse = float(np.sqrt(np.mean((closes[split:] - closes[split-1:n-1])**2)))
 naive_mape = float(np.mean(np.abs((closes[split:] - closes[split-1:n-1]) / (closes[split:]+1e-9))) * 100)
-lr      = LinearRegression().fit(np.arange(split).reshape(-1,1), closes[:split])
-lr_pred = lr.predict(np.arange(split, n).reshape(-1,1))
-lr_rmse = float(np.sqrt(np.mean((closes[split:] - lr_pred)**2)))
-lr_mape = float(np.mean(np.abs((closes[split:] - lr_pred) / (closes[split:]+1e-9))) * 100)
 print(f"Naive: RMSE=${naive_rmse:.2f}  MAPE={naive_mape:.2f}%")
-print(f"LR:    RMSE=${lr_rmse:.2f}  MAPE={lr_mape:.2f}%  ({(naive_rmse-lr_rmse)/naive_rmse*100:.1f}% vs naive)")
 
-fig, ax = plt.subplots(figsize=(13, 4))
-ax.plot(dates[:split], closes[:split], color='#cbd5e1', lw=1, label='Train')
-ax.plot(dates[split:], closes[split:], color='#0f172a', lw=1.5, label='Actual')
-ax.plot(dates[split:], lr_pred, color='#2563eb', lw=1.5, ls='--', label='LR')
-ax.axvline(dates[split], color='#94a3b8', ls=':')
-ax.set_title('Linear Regression - Test Set'); ax.legend()
-plt.tight_layout()
-plt.savefig('notebook_outputs/02_lr.png', dpi=120, bbox_inches='tight')
-plt.close()
+# ── Linear Regression ─────────────────────────────────────────────────────────
+with mlflow.start_run(run_name="LinearRegression"):
+    mlflow.set_tag("model_type", "classical")
+    mlflow.log_param("train_size", split)
+    mlflow.log_param("test_size", n - split)
+    mlflow.log_param("features", "time_index")
 
-# LSTM training
-SEQ = 30
-feats_arr   = df_feat[['open','high','low','close','volume']].values
-sc_lstm     = MinMaxScaler().fit(feats_arr)
-norm        = sc_lstm.transform(feats_arr)
-Xs = np.array([norm[i:i+SEQ] for i in range(len(norm)-SEQ)])
-Ys = np.array([norm[i+SEQ, 3] for i in range(len(norm)-SEQ)])  # close = col 3
-ss = int(len(Xs) * 0.8)
-X_tr = torch.tensor(Xs[:ss], dtype=torch.float32)
-y_tr = torch.tensor(Ys[:ss], dtype=torch.float32)
-X_te = torch.tensor(Xs[ss:], dtype=torch.float32)
-y_te = torch.tensor(Ys[ss:], dtype=torch.float32)
-loader     = DataLoader(TensorDataset(X_tr, y_tr), batch_size=32)
-val_loader = DataLoader(TensorDataset(X_te, y_te), batch_size=32)
+    lr      = LinearRegression().fit(np.arange(split).reshape(-1,1), closes[:split])
+    lr_pred = lr.predict(np.arange(split, n).reshape(-1,1))
+    lr_rmse = float(np.sqrt(np.mean((closes[split:] - lr_pred)**2)))
+    lr_mape = float(np.mean(np.abs((closes[split:] - lr_pred) / (closes[split:]+1e-9))) * 100)
 
-class OneStepLSTM(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.lstm = nn.LSTM(5, 64, batch_first=True)
-        self.fc   = nn.Linear(64, 1)
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :])
+    mlflow.log_metric("rmse", lr_rmse)
+    mlflow.log_metric("mape", lr_mape)
+    mlflow.log_metric("rmse_vs_naive_pct", (naive_rmse - lr_rmse) / naive_rmse * 100)
 
-mdl  = OneStepLSTM()
-opt  = torch.optim.Adam(mdl.parameters(), lr=0.001)
-crit = nn.MSELoss()
-tr_l, vl_l, best, patience = [], [], float('inf'), 0
+    fig, ax = plt.subplots(figsize=(13, 4))
+    ax.plot(dates[:split], closes[:split], color='#cbd5e1', lw=1, label='Train')
+    ax.plot(dates[split:], closes[split:], color='#0f172a', lw=1.5, label='Actual')
+    ax.plot(dates[split:], lr_pred, color='#2563eb', lw=1.5, ls='--', label='LR')
+    ax.axvline(dates[split], color='#94a3b8', ls=':')
+    ax.set_title(f'Linear Regression — RMSE={lr_rmse:.2f}  MAPE={lr_mape:.2f}%'); ax.legend()
+    plt.tight_layout()
+    plt.savefig('notebook_outputs/02_lr.png', dpi=120, bbox_inches='tight')
+    mlflow.log_artifact('notebook_outputs/02_lr.png', artifact_path="plots")
+    plt.close()
+    print(f"LR:    RMSE=${lr_rmse:.2f}  MAPE={lr_mape:.2f}%  ({(naive_rmse-lr_rmse)/naive_rmse*100:.1f}% vs naive)")
 
-print("Training LSTM...")
-for ep in range(50):
-    mdl.train(); epl = 0
-    for xb, yb in loader:
-        opt.zero_grad()
-        loss = crit(mdl(xb).squeeze(), yb)
-        loss.backward(); opt.step(); epl += loss.item()
-    tr_l.append(epl / len(loader))
+# ── One-Step LSTM ─────────────────────────────────────────────────────────────
+SEQ        = 30
+HIDDEN     = 64
+LR_RATE    = 0.001
+BATCH      = 32
+MAX_EPOCHS = 50
+PATIENCE   = 5
+
+with mlflow.start_run(run_name="OneStepLSTM"):
+    mlflow.set_tag("model_type", "deep_learning")
+    mlflow.log_params({
+        "seq_len":    SEQ,
+        "hidden_dim": HIDDEN,
+        "lr":         LR_RATE,
+        "batch_size": BATCH,
+        "max_epochs": MAX_EPOCHS,
+        "patience":   PATIENCE,
+        "features":   "open,high,low,close,volume",
+        "train_size": "80%",
+    })
+
+    feats_arr = df_feat[['open','high','low','close','volume']].values
+    sc_lstm   = MinMaxScaler().fit(feats_arr)
+    norm      = sc_lstm.transform(feats_arr)
+    Xs = np.array([norm[i:i+SEQ] for i in range(len(norm)-SEQ)])
+    Ys = np.array([norm[i+SEQ, 3] for i in range(len(norm)-SEQ)])  # close = col 3
+    ss = int(len(Xs) * 0.8)
+    X_tr = torch.tensor(Xs[:ss], dtype=torch.float32)
+    y_tr = torch.tensor(Ys[:ss], dtype=torch.float32)
+    X_te = torch.tensor(Xs[ss:], dtype=torch.float32)
+    y_te = torch.tensor(Ys[ss:], dtype=torch.float32)
+    loader     = DataLoader(TensorDataset(X_tr, y_tr), batch_size=BATCH)
+    val_loader = DataLoader(TensorDataset(X_te, y_te), batch_size=BATCH)
+
+    class OneStepLSTM(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.lstm = nn.LSTM(5, HIDDEN, batch_first=True)
+            self.fc   = nn.Linear(HIDDEN, 1)
+        def forward(self, x):
+            out, _ = self.lstm(x)
+            return self.fc(out[:, -1, :])
+
+    mdl  = OneStepLSTM()
+    opt  = torch.optim.Adam(mdl.parameters(), lr=LR_RATE)
+    crit = nn.MSELoss()
+    tr_l, vl_l, best, patience = [], [], float('inf'), 0
+
+    print("Training LSTM...")
+    for ep in range(MAX_EPOCHS):
+        mdl.train(); epl = 0
+        for xb, yb in loader:
+            opt.zero_grad()
+            loss = crit(mdl(xb).squeeze(), yb)
+            loss.backward(); opt.step(); epl += loss.item()
+        tr_l.append(epl / len(loader))
+        mdl.eval()
+        with torch.no_grad():
+            vl = sum(crit(mdl(xb).squeeze(), yb).item() for xb, yb in val_loader) / len(val_loader)
+        vl_l.append(vl)
+        mlflow.log_metrics({"train_loss": tr_l[-1], "val_loss": vl_l[-1]}, step=ep)
+        if vl < best:
+            best = vl; patience = 0
+            torch.save(mdl.state_dict(), 'amazon_lstm_model.pth')
+        else:
+            patience += 1
+            if patience >= PATIENCE:
+                print(f"  Early stopping at epoch {ep+1}")
+                mlflow.log_param("stopped_epoch", ep + 1)
+                break
+        if (ep+1) % 5 == 0:
+            print(f"  Epoch {ep+1:3d} | Train: {tr_l[-1]:.5f} | Val: {vl_l[-1]:.5f}")
+
+    mdl.load_state_dict(torch.load('amazon_lstm_model.pth', map_location='cpu', weights_only=False))
     mdl.eval()
     with torch.no_grad():
-        vl = sum(crit(mdl(xb).squeeze(), yb).item() for xb, yb in val_loader) / len(val_loader)
-    vl_l.append(vl)
-    if vl < best:
-        best = vl; patience = 0
-        torch.save(mdl.state_dict(), 'amazon_lstm_model.pth')
-    else:
-        patience += 1
-        if patience >= 5:
-            print(f"  Early stopping at epoch {ep+1}")
-            break
-    if (ep+1) % 5 == 0:
-        print(f"  Epoch {ep+1:3d} | Train: {tr_l[-1]:.5f} | Val: {vl_l[-1]:.5f}")
+        ps = mdl(X_te).squeeze().numpy()
+    dummy = np.zeros((len(ps), 5)); dummy[:, 3] = ps
+    inv_p = sc_lstm.inverse_transform(dummy)[:, 3]
+    dummy2 = np.zeros((len(y_te), 5)); dummy2[:, 3] = y_te.numpy()
+    inv_t = sc_lstm.inverse_transform(dummy2)[:, 3]
+    lstm_rmse = float(np.sqrt(np.mean((inv_t - inv_p)**2)))
+    lstm_mape = float(np.mean(np.abs((inv_t - inv_p) / (inv_t+1e-9))) * 100)
 
-mdl.load_state_dict(torch.load('amazon_lstm_model.pth', map_location='cpu', weights_only=False))
-mdl.eval()
-with torch.no_grad():
-    ps = mdl(X_te).squeeze().numpy()
-dummy = np.zeros((len(ps), 5)); dummy[:, 3] = ps
-inv_p = sc_lstm.inverse_transform(dummy)[:, 3]
-dummy2 = np.zeros((len(y_te), 5)); dummy2[:, 3] = y_te.numpy()
-inv_t = sc_lstm.inverse_transform(dummy2)[:, 3]
-lstm_rmse = float(np.sqrt(np.mean((inv_t - inv_p)**2)))
-lstm_mape = float(np.mean(np.abs((inv_t - inv_p) / (inv_t+1e-9))) * 100)
-print(f"LSTM:  RMSE=${lstm_rmse:.2f}  MAPE={lstm_mape:.2f}%  ({(naive_rmse-lstm_rmse)/naive_rmse*100:.1f}% vs naive)")
+    mlflow.log_metric("rmse", lstm_rmse)
+    mlflow.log_metric("mape", lstm_mape)
+    mlflow.log_metric("rmse_vs_naive_pct", (naive_rmse - lstm_rmse) / naive_rmse * 100)
+    mlflow.log_metric("best_val_loss", best)
+    mlflow.log_artifact('amazon_lstm_model.pth', artifact_path="models")
 
-fig, axes = plt.subplots(1, 2, figsize=(13, 4))
-axes[0].plot(tr_l, label='Train', color='#2563eb')
-axes[0].plot(vl_l, label='Val',   color='#ef4444')
-axes[0].set_title('One-Step LSTM - Loss Curves')
-axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('MSE Loss'); axes[0].legend()
-td = dates[SEQ+ss:][:len(inv_p)]
-axes[1].plot(td, inv_t, color='#0f172a', lw=1.5, label='Actual')
-axes[1].plot(td, inv_p, color='#2563eb', lw=1.2, ls='--', label='LSTM')
-axes[1].set_title(f'LSTM Test  RMSE={lstm_rmse:.2f}  MAPE={lstm_mape:.2f}%')
-axes[1].legend()
-plt.tight_layout()
-plt.savefig('notebook_outputs/03_lstm_training.png', dpi=120, bbox_inches='tight')
-plt.savefig('training_validation_loss.png', dpi=120, bbox_inches='tight')
-plt.close()
-print("LSTM plots saved.")
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+    axes[0].plot(tr_l, label='Train', color='#2563eb')
+    axes[0].plot(vl_l, label='Val',   color='#ef4444')
+    axes[0].set_title('One-Step LSTM — Loss Curves')
+    axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('MSE Loss'); axes[0].legend()
+    td = dates[SEQ+ss:][:len(inv_p)]
+    axes[1].plot(td, inv_t, color='#0f172a', lw=1.5, label='Actual')
+    axes[1].plot(td, inv_p, color='#2563eb', lw=1.2, ls='--', label='LSTM')
+    axes[1].set_title(f'LSTM Test  RMSE={lstm_rmse:.2f}  MAPE={lstm_mape:.2f}%')
+    axes[1].legend()
+    plt.tight_layout()
+    plt.savefig('notebook_outputs/03_lstm_training.png', dpi=120, bbox_inches='tight')
+    plt.savefig('training_validation_loss.png', dpi=120, bbox_inches='tight')
+    mlflow.log_artifact('notebook_outputs/03_lstm_training.png', artifact_path="plots")
+    plt.close()
+
+    print(f"LSTM:  RMSE=${lstm_rmse:.2f}  MAPE={lstm_mape:.2f}%  ({(naive_rmse-lstm_rmse)/naive_rmse*100:.1f}% vs naive)")
+    print("LSTM plots saved.")
+
 np.save('notebook_outputs/_step1_metrics.npy', [naive_rmse, naive_mape, lr_rmse, lr_mape, lstm_rmse, lstm_mape])
 print("Step 1 complete.")
-

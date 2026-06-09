@@ -108,6 +108,28 @@ The dashboard also includes supporting analyses that provide context for the for
 
 ---
 
+## Experiment Tracking (MLflow)
+
+All training runs are tracked locally with **MLflow** under the `AMZN-Stock-Forecasting` experiment. Each run logs:
+
+| What | Details |
+|---|---|
+| **Parameters** | `seq_len`, `hidden_dim`, `lr`, `batch_size`, `patience`, `features` |
+| **Metrics per epoch** | `train_loss`, `val_loss` (step-by-step loss curves) |
+| **Final metrics** | `rmse`, `mape`, `rmse_vs_naive_pct`, `best_val_loss` |
+| **Artifacts** | Model `.pth` files, prediction plots |
+| **Tags** | `model_type` (classical / deep_learning / walk_forward), `ticker` |
+
+To explore all runs locally:
+```bash
+mlflow ui --backend-store-uri mlruns
+# opens at http://localhost:5000
+```
+
+This gives a full comparison table of LR vs LSTM vs Seq2Seq vs XGBoost across all tickers — every hyperparameter and metric side-by-side.
+
+---
+
 ## Reproducibility
 
 The full training pipeline is documented in [`training_notebook.ipynb`](training_notebook.ipynb):
@@ -184,6 +206,7 @@ App runs at `http://localhost:8501`
 | Classical ML | scikit-learn — Linear Regression, Random Forest; XGBoost |
 | NLP | HuggingFace Transformers (FinBERT), feedparser |
 | Statistics | SciPy, StatsModels |
+| Experiment Tracking | MLflow (local `mlruns/`) |
 | Market Data | yfinance + CSV fallback |
 | Deployment | Streamlit Cloud (free tier) |
 

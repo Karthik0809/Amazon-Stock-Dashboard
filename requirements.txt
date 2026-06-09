@@ -12,3 +12,4 @@ statsmodels
 xgboost
 transformers
 shap
+mlflow
