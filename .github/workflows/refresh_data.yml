@@ -35,5 +35,6 @@ jobs:
             echo "No new data — skipping commit"
           else
             git commit -m "chore: auto-refresh AMZN data $(date -u +%Y-%m-%d)"
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            git pull --rebase origin main
+            git push origin main
           fi
