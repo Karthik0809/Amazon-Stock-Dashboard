@@ -137,7 +137,7 @@ The dashboard also includes supporting analyses that provide context for the for
 
 ## Experiment Tracking (MLflow)
 
-All training runs are tracked locally with **MLflow** under the `AMZN-Stock-Forecasting` experiment. Each run logs:
+All training runs (**18 runs** committed in `mlruns/`) are tracked with **MLflow** under the `AMZN-Stock-Forecasting` experiment — regression models, LSTM/Seq2Seq training, walk-forward validation per ticker, and direction classifiers across three horizons. Each run logs:
 
 | What | Details |
 |---|---|
@@ -203,7 +203,7 @@ A few non-obvious decisions made during development:
 - **Chronological train/test split** — shuffling would leak future prices into training; all splits preserve time ordering
 - **LSTM autoregressive rollout fix** — multi-step rollout updates the Close feature at the correct index; an off-by-one bug caused trend inversions in early versions
 - **Volatility regime batching** — initial implementation called `add_vrect()` ~500 times (once per trading day), blocking all subsequent tab renders for 10–30s; fixed by merging consecutive high-vol days into single rectangles
-- **Streamlit caching strategy** — heavy functions (LSTM inference, Monte Carlo, risk metrics) are `@st.cache_data(ttl=3600)` to avoid re-running on every tab click
+- **Streamlit caching strategy** — heavy functions (LSTM inference, SHAP, walk-forward, risk metrics) are `@st.cache_data(ttl=3600)` to avoid re-running on every tab click
 - **XGBoost memory constraint** — `n_jobs=1` and reduced CV folds to fit within Streamlit Cloud's 1GB RAM limit
 
 ---
