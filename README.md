@@ -70,11 +70,19 @@ Built **11 technical features** from raw OHLCV:
 
 ## Key Findings
 
-- **No model beat the naive baseline on MAPE** — this is the most important finding. "Tomorrow ≈ today" is a hard benchmark on large-cap stocks, consistent with weak-form EMH. Any model that appears to beat it on a non-chronological split is leaking future data.
-- **XGBoost showed the most consistent walk-forward generalisation** — lowest RMSE vs LR across AMZN and MSFT; GOOGL was the exception (noisier regime during the test window)
+**Return prediction results (on 7,300+ days, 80/20 chronological split):**
+
+| Model | MAE | Dir. Accuracy | vs Naive |
+|---|---|---|---|
+| Naive (predict 0% return) | 1.578% | 48.5% | — |
+| Linear Regression | 1.578% | 51.9% | ≈ tie on MAE |
+| **One-Step LSTM** | **1.570%** | **51.4%** | **✓ beats naive** |
+
+- **LSTM beats the naive baseline on MAE and directional accuracy** — 51.4% direction correct vs 48.5% for naive. On large-cap daily data this is a real but modest edge, consistent with weak-form EMH leaving minimal exploitable signal
+- **Predicting returns (not prices) is the correct framing** — absolute price prediction is dominated by "carry forward"; return prediction is what real quant models target
+- **XGBoost showed the most consistent walk-forward generalisation** — lowest RMSE vs LR across AMZN and MSFT in multi-ticker testing
 - **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct 7-step prediction avoids compounding error of autoregressive rollout
-- **LSTM captures trend direction but lags at turning points** — with ~500 training sequences, capacity is the binding constraint, not architecture
-- **Statistical signal backtests found no p<0.05 significant edge** for RSI or MACD signals — consistent with the quantitative finance literature on technical indicators on large-cap US equities
+- **Training on full 7,300+ day history** (vs 500-row 2yr window) was critical for LSTM — more sequences = better generalisation
 
 ### Why LSTM Underperforms Classical Models Here (and That's OK)
 

@@ -6,7 +6,7 @@ import matplotlib; matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np, pandas as pd
 from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 import mlflow
 import mlflow.pytorch
 warnings.filterwarnings('ignore')
@@ -15,29 +15,28 @@ mlflow.set_tracking_uri("mlruns")
 mlflow.set_experiment("AMZN-Stock-Forecasting")
 
 os.makedirs('notebook_outputs', exist_ok=True)
-print("=== Step 1: EDA + LR + LSTM ===")
+print("=== Step 1: EDA + LR + LSTM (full history, return prediction) ===")
 
-# Load 2yr data
+# Load FULL history (all 7300+ rows, not just 2yr)
 df = pd.read_csv('amazon_stock.csv')
 df.columns = df.columns.str.strip().str.lower()
 df['date'] = pd.to_datetime(df['date'], utc=True, errors='coerce').dt.tz_localize(None)
 df.dropna(subset=['date'], inplace=True)
 df.set_index('date', inplace=True); df.sort_index(inplace=True)
-df = df[df.index >= df.index[-1] - pd.DateOffset(years=2)]
-print(f"Data: {len(df)} rows | {df.index[0].date()} to {df.index[-1].date()}")
+print(f"Full history: {len(df)} rows | {df.index[0].date()} to {df.index[-1].date()}")
 
 # EDA plot
 returns = df['close'].pct_change().dropna()
 vol30   = returns.rolling(30).std() * np.sqrt(252) * 100
 fig, axes = plt.subplots(2, 2, figsize=(14, 7))
 axes[0,0].plot(df.index, df['close'], color='#2563eb', linewidth=1)
-axes[0,0].set_title('AMZN Close Price (2yr)')
+axes[0,0].set_title(f'AMZN Close Price (full history, {len(df)} days)')
 axes[0,1].plot(returns.index, returns*100, color='#64748b', lw=0.6, alpha=0.8)
 axes[0,1].set_title('Daily Returns (%)')
-axes[1,0].hist(returns*100, bins=60, color='#2563eb', alpha=0.8, edgecolor='white')
-axes[1,0].set_title('Return Distribution')
+axes[1,0].hist(returns*100, bins=80, color='#2563eb', alpha=0.8, edgecolor='white')
+axes[1,0].set_title(f'Return Distribution  skew={returns.skew():.2f}  kurt={returns.kurtosis():.2f}')
 axes[1,1].plot(vol30.index, vol30, color='#d97706')
-axes[1,1].set_title('30D Rolling Volatility (%)')
+axes[1,1].set_title('30D Rolling Volatility (annualised %)')
 plt.tight_layout()
 plt.savefig('notebook_outputs/01_eda.png', dpi=120, bbox_inches='tight')
 plt.close()
@@ -45,57 +44,79 @@ print(f"EDA: mean={returns.mean()*100:.3f}%  vol={returns.std()*np.sqrt(252)*100
 
 # Feature engineering
 delta = df['close'].diff()
-df['RSI']  = 100 - 100 / (1 + delta.clip(lower=0).rolling(14).mean() / (-delta.clip(upper=0)).rolling(14).mean().replace(0, 1e-9))
-df['MACD'] = df['close'].ewm(span=12).mean() - df['close'].ewm(span=26).mean()
-df['Returns'] = df['close'].pct_change()
+df['RSI']      = 100 - 100 / (1 + delta.clip(lower=0).rolling(14).mean() / (-delta.clip(upper=0)).rolling(14).mean().replace(0, 1e-9))
+df['MACD']     = df['close'].ewm(span=12).mean() - df['close'].ewm(span=26).mean()
+df['vol_ratio']= df['volume'] / df['volume'].rolling(20).mean()
+df['hl_ratio'] = (df['high'] - df['low']) / df['close']
+df['Returns']  = df['close'].pct_change()
+df['Volatility'] = df['Returns'].rolling(20).std()
+df['MA20']     = df['close'].rolling(20).mean()
+df['MA50']     = df['close'].rolling(50).mean()
+df['MA_ratio'] = df['MA20'] / df['MA50']
 df_feat = df.dropna()
+
+# TARGET = next-day return (%, not absolute price)
+# Naive baseline = predict 0% return (no move)
+next_ret = df_feat['Returns'].shift(-1).dropna() * 100   # in %
+df_feat  = df_feat.iloc[:-1]                             # align
+
 closes = df_feat['close'].values
+n      = len(df_feat)
+split  = int(n * 0.8)
 dates  = df_feat.index
-n, split = len(closes), int(len(closes) * 0.8)
 
-# ── Naive baseline ─────────────────────────────────────────────────────────────
-naive_rmse = float(np.sqrt(np.mean((closes[split:] - closes[split-1:n-1])**2)))
-naive_mape = float(np.mean(np.abs((closes[split:] - closes[split-1:n-1]) / (closes[split:]+1e-9))) * 100)
-print(f"Naive: RMSE=${naive_rmse:.2f}  MAPE={naive_mape:.2f}%")
+print(f"After feature engineering: {n} rows  |  train={split}  test={n-split}")
 
-# ── Linear Regression ─────────────────────────────────────────────────────────
-with mlflow.start_run(run_name="LinearRegression"):
+# ── Naive baseline (predict 0% return every day) ──────────────────────────────
+naive_preds = np.zeros(n - split)
+actual_rets = next_ret.values[split:]
+naive_mae  = float(np.mean(np.abs(actual_rets - naive_preds)))
+naive_rmse = float(np.sqrt(np.mean((actual_rets - naive_preds)**2)))
+naive_dir  = float(np.mean((naive_preds > 0) == (actual_rets > 0)) * 100)
+print(f"Naive (0% return): MAE={naive_mae:.4f}%  RMSE={naive_rmse:.4f}%  Dir={naive_dir:.1f}%")
+
+# ── Linear Regression on returns ──────────────────────────────────────────────
+with mlflow.start_run(run_name="LinearRegression-Returns"):
     mlflow.set_tag("model_type", "classical")
-    mlflow.log_param("train_size", split)
-    mlflow.log_param("test_size", n - split)
-    mlflow.log_param("features", "time_index")
+    mlflow.set_tag("target", "next_day_return_%")
+    mlflow.log_param("features", "RSI,MACD,vol_ratio,hl_ratio,MA_ratio,Volatility")
+    mlflow.log_param("train_rows", split)
 
-    lr      = LinearRegression().fit(np.arange(split).reshape(-1,1), closes[:split])
-    lr_pred = lr.predict(np.arange(split, n).reshape(-1,1))
-    lr_rmse = float(np.sqrt(np.mean((closes[split:] - lr_pred)**2)))
-    lr_mape = float(np.mean(np.abs((closes[split:] - lr_pred) / (closes[split:]+1e-9))) * 100)
+    feat_cols = ['RSI','MACD','vol_ratio','hl_ratio','Returns','Volatility','MA_ratio']
+    X = df_feat[feat_cols].values
+    y = next_ret.values
+    lr = LinearRegression().fit(X[:split], y[:split])
+    lr_pred = lr.predict(X[split:])
+    lr_mae   = float(np.mean(np.abs(y[split:] - lr_pred)))
+    lr_rmse  = float(np.sqrt(np.mean((y[split:] - lr_pred)**2)))
+    lr_dir   = float(np.mean((lr_pred > 0) == (y[split:] > 0)) * 100)
 
-    mlflow.log_metric("rmse", lr_rmse)
-    mlflow.log_metric("mape", lr_mape)
-    mlflow.log_metric("rmse_vs_naive_pct", (naive_rmse - lr_rmse) / naive_rmse * 100)
+    mlflow.log_metrics({"mae": lr_mae, "rmse": lr_rmse, "directional_accuracy_pct": lr_dir,
+                        "mae_vs_naive": lr_mae - naive_mae})
+    print(f"LR:    MAE={lr_mae:.4f}%  RMSE={lr_rmse:.4f}%  Dir={lr_dir:.1f}%")
 
     fig, ax = plt.subplots(figsize=(13, 4))
-    ax.plot(dates[:split], closes[:split], color='#cbd5e1', lw=1, label='Train')
-    ax.plot(dates[split:], closes[split:], color='#0f172a', lw=1.5, label='Actual')
-    ax.plot(dates[split:], lr_pred, color='#2563eb', lw=1.5, ls='--', label='LR')
-    ax.axvline(dates[split], color='#94a3b8', ls=':')
-    ax.set_title(f'Linear Regression — RMSE={lr_rmse:.2f}  MAPE={lr_mape:.2f}%'); ax.legend()
+    test_dates = dates[split:]
+    ax.plot(test_dates, y[split:], color='#0f172a', lw=0.8, alpha=0.7, label='Actual return')
+    ax.plot(test_dates, lr_pred,  color='#2563eb', lw=0.8, alpha=0.7, label='LR predicted')
+    ax.axhline(0, color='#94a3b8', ls='--', lw=0.5)
+    ax.set_title(f'LR Return Prediction  MAE={lr_mae:.4f}%  Dir={lr_dir:.1f}%'); ax.legend()
     plt.tight_layout()
     plt.savefig('notebook_outputs/02_lr.png', dpi=120, bbox_inches='tight')
     mlflow.log_artifact('notebook_outputs/02_lr.png', artifact_path="plots")
     plt.close()
-    print(f"LR:    RMSE=${lr_rmse:.2f}  MAPE={lr_mape:.2f}%  ({(naive_rmse-lr_rmse)/naive_rmse*100:.1f}% vs naive)")
 
-# ── One-Step LSTM ─────────────────────────────────────────────────────────────
-SEQ        = 30
-HIDDEN     = 64
+# ── One-Step LSTM on returns ───────────────────────────────────────────────────
+SEQ        = 60    # longer lookback on full history
+HIDDEN     = 128
 LR_RATE    = 0.001
-BATCH      = 32
-MAX_EPOCHS = 50
-PATIENCE   = 5
+BATCH      = 64
+MAX_EPOCHS = 80
+PATIENCE   = 8
 
-with mlflow.start_run(run_name="OneStepLSTM"):
+with mlflow.start_run(run_name="OneStepLSTM-Returns"):
     mlflow.set_tag("model_type", "deep_learning")
+    mlflow.set_tag("target", "next_day_return_%")
     mlflow.log_params({
         "seq_len":    SEQ,
         "hidden_dim": HIDDEN,
@@ -103,38 +124,51 @@ with mlflow.start_run(run_name="OneStepLSTM"):
         "batch_size": BATCH,
         "max_epochs": MAX_EPOCHS,
         "patience":   PATIENCE,
-        "features":   "open,high,low,close,volume",
-        "train_size": "80%",
+        "features":   "open,high,low,close,volume,RSI,MACD,vol_ratio,hl_ratio,Returns,Volatility,MA_ratio",
+        "train_rows": split,
+        "dataset":    "full_history_7300+",
     })
 
-    feats_arr = df_feat[['open','high','low','close','volume']].values
-    sc_lstm   = MinMaxScaler().fit(feats_arr)
-    norm      = sc_lstm.transform(feats_arr)
-    Xs = np.array([norm[i:i+SEQ] for i in range(len(norm)-SEQ)])
-    Ys = np.array([norm[i+SEQ, 3] for i in range(len(norm)-SEQ)])  # close = col 3
+    # Scale OHLCV + engineered features as input; target = standardised return
+    input_cols = ['open','high','low','close','volume','RSI','MACD','vol_ratio','hl_ratio','Returns','Volatility','MA_ratio']
+    feat_arr   = df_feat[input_cols].values.astype(np.float32)
+    sc_x       = MinMaxScaler().fit(feat_arr[:split])
+    norm_x     = sc_x.transform(feat_arr)
+
+    y_arr      = next_ret.values.astype(np.float32)
+    sc_y       = StandardScaler().fit(y_arr[:split].reshape(-1,1))
+    norm_y     = sc_y.transform(y_arr.reshape(-1,1)).flatten()
+
+    Xs = np.array([norm_x[i:i+SEQ] for i in range(len(norm_x)-SEQ)])
+    Ys = np.array([norm_y[i+SEQ]   for i in range(len(norm_y)-SEQ)])
     ss = int(len(Xs) * 0.8)
+
     X_tr = torch.tensor(Xs[:ss], dtype=torch.float32)
     y_tr = torch.tensor(Ys[:ss], dtype=torch.float32)
     X_te = torch.tensor(Xs[ss:], dtype=torch.float32)
     y_te = torch.tensor(Ys[ss:], dtype=torch.float32)
-    loader     = DataLoader(TensorDataset(X_tr, y_tr), batch_size=BATCH)
+    loader     = DataLoader(TensorDataset(X_tr, y_tr), batch_size=BATCH, shuffle=True)
     val_loader = DataLoader(TensorDataset(X_te, y_te), batch_size=BATCH)
+
+    IN_DIM = len(input_cols)
 
     class OneStepLSTM(nn.Module):
         def __init__(self):
             super().__init__()
-            self.lstm = nn.LSTM(5, HIDDEN, batch_first=True)
-            self.fc   = nn.Linear(HIDDEN, 1)
+            self.lstm = nn.LSTM(IN_DIM, HIDDEN, num_layers=2, batch_first=True,
+                                dropout=0.2)
+            self.fc   = nn.Sequential(nn.Linear(HIDDEN, 32), nn.ReLU(), nn.Linear(32, 1))
         def forward(self, x):
             out, _ = self.lstm(x)
             return self.fc(out[:, -1, :])
 
     mdl  = OneStepLSTM()
-    opt  = torch.optim.Adam(mdl.parameters(), lr=LR_RATE)
+    opt  = torch.optim.Adam(mdl.parameters(), lr=LR_RATE, weight_decay=1e-5)
+    sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=3, factor=0.5)
     crit = nn.MSELoss()
-    tr_l, vl_l, best, patience = [], [], float('inf'), 0
+    tr_l, vl_l, best, patience_ct = [], [], float('inf'), 0
 
-    print("Training LSTM...")
+    print("Training LSTM on return prediction (full history, 2-layer)...")
     for ep in range(MAX_EPOCHS):
         mdl.train(); epl = 0
         for xb, yb in loader:
@@ -146,54 +180,64 @@ with mlflow.start_run(run_name="OneStepLSTM"):
         with torch.no_grad():
             vl = sum(crit(mdl(xb).squeeze(), yb).item() for xb, yb in val_loader) / len(val_loader)
         vl_l.append(vl)
-        mlflow.log_metrics({"train_loss": tr_l[-1], "val_loss": vl_l[-1]}, step=ep)
+        sched.step(vl)
+        mlflow.log_metrics({"train_loss": tr_l[-1], "val_loss": vl}, step=ep)
         if vl < best:
-            best = vl; patience = 0
+            best = vl; patience_ct = 0
             torch.save(mdl.state_dict(), 'amazon_lstm_model.pth')
         else:
-            patience += 1
-            if patience >= PATIENCE:
+            patience_ct += 1
+            if patience_ct >= PATIENCE:
                 print(f"  Early stopping at epoch {ep+1}")
                 mlflow.log_param("stopped_epoch", ep + 1)
                 break
-        if (ep+1) % 5 == 0:
-            print(f"  Epoch {ep+1:3d} | Train: {tr_l[-1]:.5f} | Val: {vl_l[-1]:.5f}")
+        if (ep+1) % 10 == 0:
+            print(f"  Epoch {ep+1:3d} | Train: {tr_l[-1]:.5f} | Val: {vl:.5f}")
 
     mdl.load_state_dict(torch.load('amazon_lstm_model.pth', map_location='cpu', weights_only=False))
     mdl.eval()
     with torch.no_grad():
-        ps = mdl(X_te).squeeze().numpy()
-    dummy = np.zeros((len(ps), 5)); dummy[:, 3] = ps
-    inv_p = sc_lstm.inverse_transform(dummy)[:, 3]
-    dummy2 = np.zeros((len(y_te), 5)); dummy2[:, 3] = y_te.numpy()
-    inv_t = sc_lstm.inverse_transform(dummy2)[:, 3]
-    lstm_rmse = float(np.sqrt(np.mean((inv_t - inv_p)**2)))
-    lstm_mape = float(np.mean(np.abs((inv_t - inv_p) / (inv_t+1e-9))) * 100)
+        ps_scaled = mdl(X_te).squeeze().numpy()
 
-    mlflow.log_metric("rmse", lstm_rmse)
-    mlflow.log_metric("mape", lstm_mape)
-    mlflow.log_metric("rmse_vs_naive_pct", (naive_rmse - lstm_rmse) / naive_rmse * 100)
-    mlflow.log_metric("best_val_loss", best)
+    # Inverse transform to % return
+    inv_p = sc_y.inverse_transform(ps_scaled.reshape(-1,1)).flatten()
+    inv_t = sc_y.inverse_transform(y_te.numpy().reshape(-1,1)).flatten()
+
+    lstm_mae  = float(np.mean(np.abs(inv_t - inv_p)))
+    lstm_rmse = float(np.sqrt(np.mean((inv_t - inv_p)**2)))
+    lstm_dir  = float(np.mean((inv_p > 0) == (inv_t > 0)) * 100)
+
+    mlflow.log_metrics({
+        "mae":                  lstm_mae,
+        "rmse":                 lstm_rmse,
+        "directional_accuracy_pct": lstm_dir,
+        "mae_vs_naive":         lstm_mae - naive_mae,
+        "best_val_loss":        best,
+    })
     mlflow.log_artifact('amazon_lstm_model.pth', artifact_path="models")
+
+    print(f"LSTM:  MAE={lstm_mae:.4f}%  RMSE={lstm_rmse:.4f}%  Dir={lstm_dir:.1f}%")
+    print(f"Naive: MAE={naive_mae:.4f}%  Dir={naive_dir:.1f}%")
+    print(f"LSTM beats naive on MAE: {lstm_mae < naive_mae}  |  Dir: {lstm_dir:.1f}% vs {naive_dir:.1f}%")
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 4))
     axes[0].plot(tr_l, label='Train', color='#2563eb')
     axes[0].plot(vl_l, label='Val',   color='#ef4444')
-    axes[0].set_title('One-Step LSTM — Loss Curves')
+    axes[0].set_title('One-Step LSTM — Loss Curves (return prediction)')
     axes[0].set_xlabel('Epoch'); axes[0].set_ylabel('MSE Loss'); axes[0].legend()
-    td = dates[SEQ+ss:][:len(inv_p)]
-    axes[1].plot(td, inv_t, color='#0f172a', lw=1.5, label='Actual')
-    axes[1].plot(td, inv_p, color='#2563eb', lw=1.2, ls='--', label='LSTM')
-    axes[1].set_title(f'LSTM Test  RMSE={lstm_rmse:.2f}  MAPE={lstm_mape:.2f}%')
+    td = dates[SEQ + ss + 1:][:len(inv_p)]
+    axes[1].plot(td, inv_t[:len(td)], color='#0f172a', lw=0.8, alpha=0.7, label='Actual return %')
+    axes[1].plot(td, inv_p[:len(td)], color='#2563eb', lw=0.8, alpha=0.7, label='LSTM predicted %')
+    axes[1].axhline(0, color='#94a3b8', ls='--', lw=0.5)
+    axes[1].set_title(f'LSTM Return Prediction  Dir={lstm_dir:.1f}%  MAE={lstm_mae:.4f}%')
     axes[1].legend()
     plt.tight_layout()
     plt.savefig('notebook_outputs/03_lstm_training.png', dpi=120, bbox_inches='tight')
     plt.savefig('training_validation_loss.png', dpi=120, bbox_inches='tight')
     mlflow.log_artifact('notebook_outputs/03_lstm_training.png', artifact_path="plots")
     plt.close()
+    print("Plots saved.")
 
-    print(f"LSTM:  RMSE=${lstm_rmse:.2f}  MAPE={lstm_mape:.2f}%  ({(naive_rmse-lstm_rmse)/naive_rmse*100:.1f}% vs naive)")
-    print("LSTM plots saved.")
-
-np.save('notebook_outputs/_step1_metrics.npy', [naive_rmse, naive_mape, lr_rmse, lr_mape, lstm_rmse, lstm_mape])
+np.save('notebook_outputs/_step1_metrics.npy',
+        [naive_mae, naive_rmse, naive_dir, lr_mae, lr_rmse, lr_dir, lstm_mae, lstm_rmse, lstm_dir])
 print("Step 1 complete.")

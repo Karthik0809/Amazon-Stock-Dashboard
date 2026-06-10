@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/karth/Desktop/Amazon-Stock-Dashboard/mlruns/617340742095067755/ee884348faaa477ebccc99b117552342/artifacts
+end_time: 1781104574290
+entry_point_name: ''
+experiment_id: '617340742095067755'
+lifecycle_stage: active
+run_id: ee884348faaa477ebccc99b117552342
+run_name: LinearRegression-Returns
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1781104574036
+status: 3
+tags: []
+user_id: karth

@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/karth/Desktop/Amazon-Stock-Dashboard/mlruns/617340742095067755/dc7e3ac22ee04b00a6c943c9519f0c01/artifacts
+end_time: 1781104628291
+entry_point_name: ''
+experiment_id: '617340742095067755'
+lifecycle_stage: active
+run_id: dc7e3ac22ee04b00a6c943c9519f0c01
+run_name: OneStepLSTM-Returns
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1781104574297
+status: 3
+tags: []
+user_id: karth
