@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/karth/Desktop/Amazon-Stock-Dashboard/mlruns/617340742095067755/9c425dc4fb6f471fa73052b27baf8faa/artifacts
+end_time: 1781106128543
+entry_point_name: ''
+experiment_id: '617340742095067755'
+lifecycle_stage: active
+run_id: 9c425dc4fb6f471fa73052b27baf8faa
+run_name: XGB-HighConf-1d
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1781106128458
+status: 3
+tags: []
+user_id: karth

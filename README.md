@@ -70,19 +70,21 @@ Built **11 technical features** from raw OHLCV:
 
 ## Key Findings
 
-**Return prediction results (on 7,300+ days, 80/20 chronological split):**
+**Direction prediction results (7,300+ days, 80/20 chronological split, vs majority-class baseline):**
 
-| Model | MAE | Dir. Accuracy | vs Naive |
-|---|---|---|---|
-| Naive (predict 0% return) | 1.578% | 48.5% | — |
-| Linear Regression | 1.578% | 51.9% | ≈ tie on MAE |
-| **One-Step LSTM** | **1.570%** | **51.4%** | **✓ beats naive** |
+| Model | Horizon | Dir. Accuracy | Baseline | Edge |
+|---|---|---|---|---|
+| **XGBoost (high-confidence)** | **5-day** | **56.7%** | 53.0% | **+3.7pp** (69% coverage) |
+| **XGBoost (all days)** | **5-day** | **54.8%** | 53.0% | **+1.9pp** |
+| One-Step LSTM (returns) | 1-day | 51.4% | 48.5% naive | +2.9pp |
+| XGBoost | 1-day | 51.3% | 51.5% | ≈ none |
 
-- **LSTM beats the naive baseline on MAE and directional accuracy** — 51.4% direction correct vs 48.5% for naive. On large-cap daily data this is a real but modest edge, consistent with weak-form EMH leaving minimal exploitable signal
-- **Predicting returns (not prices) is the correct framing** — absolute price prediction is dominated by "carry forward"; return prediction is what real quant models target
-- **XGBoost showed the most consistent walk-forward generalisation** — lowest RMSE vs LR across AMZN and MSFT in multi-ticker testing
-- **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct 7-step prediction avoids compounding error of autoregressive rollout
-- **Training on full 7,300+ day history** (vs 500-row 2yr window) was critical for LSTM — more sequences = better generalisation
+- **The exploitable signal is at the 5-day horizon, not daily** — XGBoost achieves **56.7% directional accuracy on high-confidence predictions** (probability > 0.6), a +3.7pp edge over the majority baseline. Daily moves are near-random; weekly momentum/mean-reversion structure is real
+- **Honest evaluation matters** — at the 21-day horizon raw accuracy reaches 58.6%, but the majority baseline is 59% (most months are up), so no genuine edge is claimed. Most stock-prediction portfolios miss this distinction
+- **Predicting returns/direction (not prices) is the correct framing** — absolute price prediction is dominated by "carry forward"; direction is what real quant models target
+- **LSTM beats the naive baseline on daily returns** — 51.4% vs 48.5%, a real but modest edge consistent with weak-form EMH
+- **Training on full 7,300+ day history** (vs a 2-year window) was critical — more sequences = better generalisation
+- **Confidence filtering is a practical deployment pattern** — only acting when the model is confident raises accuracy from 54.8% to 56.7% while still covering 69% of trading days
 
 ### Why LSTM Underperforms Classical Models Here (and That's OK)
 

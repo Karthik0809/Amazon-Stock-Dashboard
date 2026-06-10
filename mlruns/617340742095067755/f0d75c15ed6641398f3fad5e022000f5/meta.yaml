@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/karth/Desktop/Amazon-Stock-Dashboard/mlruns/617340742095067755/f0d75c15ed6641398f3fad5e022000f5/artifacts
+end_time: 1781106129809
+entry_point_name: ''
+experiment_id: '617340742095067755'
+lifecycle_stage: active
+run_id: f0d75c15ed6641398f3fad5e022000f5
+run_name: Logistic-5d
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1781106129753
+status: 3
+tags: []
+user_id: karth

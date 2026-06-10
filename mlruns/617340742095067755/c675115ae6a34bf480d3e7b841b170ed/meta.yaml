@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/karth/Desktop/Amazon-Stock-Dashboard/mlruns/617340742095067755/c675115ae6a34bf480d3e7b841b170ed/artifacts
+end_time: 1781106129354
+entry_point_name: ''
+experiment_id: '617340742095067755'
+lifecycle_stage: active
+run_id: c675115ae6a34bf480d3e7b841b170ed
+run_name: XGB-Direction-5d
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1781106129263
+status: 3
+tags: []
+user_id: karth
