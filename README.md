@@ -1,6 +1,6 @@
 # AMZN Stock Forecasting & Analytics Dashboard
 
-> A rigorous ML benchmarking study on a real equity time series — not another "run LSTM on closing prices" project. Four models compared with walk-forward validation across three tickers, SHAP interpretability, MLflow experiment tracking, and statistically validated signal backtests. Best model: **One-Step LSTM at 3.2% MAPE** on held-out data.
+> A rigorous ML benchmarking study on a real equity time series — not another "run LSTM on closing prices" project. Four models compared with walk-forward validation across three tickers, SHAP interpretability, MLflow experiment tracking, and statistically validated signal backtests.
 
 <p align="center">
   <a href="https://amazonstock-dashboard.streamlit.app/">
@@ -26,7 +26,7 @@ Equity prices are non-stationary, noisy, and close to a random walk for large-ca
 
 **Core question:** On a real equity time series with proper evaluation discipline, does a deep learning model (LSTM, Seq2Seq) actually outperform a well-tuned classical baseline (Linear Regression, XGBoost) — and under what conditions does each approach break down?
 
-**Key result:** One-Step LSTM achieved **3.2% MAPE** on the held-out test set vs a 1.5% naive baseline — highlighting the classic DL tradeoff: meaningful but not dominant improvement given ~500 training sequences. XGBoost showed the most consistent generalisation across AMZN, MSFT, and GOOGL in walk-forward validation.
+**Key result:** No model beat the naive "yesterday's price" baseline on MAPE — a finding consistent with weak-form market efficiency on large-cap stocks. The value of the project is in the infrastructure, evaluation discipline, and honest documentation of where each approach breaks down.
 
 ---
 
@@ -70,18 +70,11 @@ Built **11 technical features** from raw OHLCV:
 
 ## Key Findings
 
-| Model | Test RMSE | Test MAPE | vs Naive |
-|---|---|---|---|
-| Naive (yesterday's price) | $4.45 | 1.53% | — |
-| Linear Regression | $23.72 | 9.20% | −433% |
-| **One-Step LSTM** | **$9.70** | **3.18%** | **−118%** |
-| XGBoost (walk-forward, AMZN) | $18.35 | 6.49% | — |
-
-- **One-Step LSTM is the best single-step forecaster** — 3.18% MAPE, outperforming LR by 6 percentage points on the test set
-- **XGBoost wins on walk-forward generalisation** — consistently lower RMSE than LR across AMZN ($18.35 vs $18.78) and MSFT ($62.20 vs $69.28), demonstrating real-world deployment robustness
-- **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct 7-step prediction avoids compounding error of autoregressive rollout (~15% MAPE improvement)
-- **Classical models outperform LSTM at longer horizons** — a well-known result: daily OHLCV data has ~500 sequences, far below what LSTMs need to unlock their capacity
-- **All models underperform at regime inflection points** — consistent with weak-form market efficiency on large-cap stocks; documented honestly rather than hidden
+- **No model beat the naive baseline on MAPE** — this is the most important finding. "Tomorrow ≈ today" is a hard benchmark on large-cap stocks, consistent with weak-form EMH. Any model that appears to beat it on a non-chronological split is leaking future data.
+- **XGBoost showed the most consistent walk-forward generalisation** — lowest RMSE vs LR across AMZN and MSFT; GOOGL was the exception (noisier regime during the test window)
+- **Seq2Seq outperforms one-step LSTM on multi-step horizons** — direct 7-step prediction avoids compounding error of autoregressive rollout
+- **LSTM captures trend direction but lags at turning points** — with ~500 training sequences, capacity is the binding constraint, not architecture
+- **Statistical signal backtests found no p<0.05 significant edge** for RSI or MACD signals — consistent with the quantitative finance literature on technical indicators on large-cap US equities
 
 ### Why LSTM Underperforms Classical Models Here (and That's OK)
 
