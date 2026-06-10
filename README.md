@@ -86,6 +86,19 @@ Built **11 technical features** from raw OHLCV:
 - **Training on full 7,300+ day history** (vs a 2-year window) was critical — more sequences = better generalisation
 - **Confidence filtering is a practical deployment pattern** — only acting when the model is confident raises accuracy from 54.8% to 56.7% while still covering 69% of trading days
 
+### Why Not 90%+ Accuracy Like Other Stock Prediction Projects?
+
+Many stock prediction portfolios report 85–95% accuracy. Those numbers are almost always artifacts of broken evaluation, not better models. The four most common failure modes — all explicitly avoided here:
+
+| Common mistake | Why it inflates accuracy | This project |
+|---|---|---|
+| **Random train/test split** | Shuffling time series puts future prices in the training set — the model memorizes the future | Strict chronological 80/20 split |
+| **Predicting price level, not movement** | If AMZN is at $200, predicting "$201" is 99.5% "accurate" — that's just the naive baseline | Targets are returns/direction, scored against naive and majority baselines |
+| **Scaler fit on full dataset** | MinMax bounds from the test period leak future information into training | Scalers fit on the train split only |
+| **Cherry-picked test window** | A trending period makes "always predict up" look brilliant | Full 1,453-day test set; 21-day result rejected for failing its baseline |
+
+For calibration: Renaissance Technologies — the most successful quantitative fund in history — built its returns on directional edges in the 51–55% range. A consistent +2–4pp edge over baseline on liquid large-cap equities is a professional-grade result; 90% would mean markets are not even weakly efficient. **If a model genuinely predicted stock direction at 85%+, it would be running a hedge fund, not sitting in a GitHub repo.**
+
 ### Why LSTM Underperforms Classical Models Here (and That's OK)
 
 This is a known result in the quantitative finance literature. Daily OHLCV data for a single stock is:
